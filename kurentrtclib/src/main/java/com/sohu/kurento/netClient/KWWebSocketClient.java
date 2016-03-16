@@ -4,7 +4,6 @@ package com.sohu.kurento.netClient;
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
 import com.google.gson.JsonObject;
-import com.google.gson.reflect.TypeToken;
 import com.sohu.kurento.bean.RoomBean;
 import com.sohu.kurento.bean.SignalingResponseBean;
 import com.sohu.kurento.bean.UserType;
@@ -13,7 +12,6 @@ import com.sohu.kurento.util.LooperExecutor;
 
 import org.webrtc.IceCandidate;
 
-import java.lang.reflect.Type;
 import java.util.ArrayList;
 
 /**

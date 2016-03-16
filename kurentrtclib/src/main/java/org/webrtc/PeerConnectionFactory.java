@@ -35,139 +35,243 @@ import java.util.List;
  * the PeerConnection API for clients.
  */
 public class PeerConnectionFactory {
-    static {
-        System.loadLibrary("jingle_peerconnection_so");
+  static {
+    System.loadLibrary("jingle_peerconnection_so");
+  }
+
+  private static final String TAG = "PeerConnectionFactory";
+  private final long nativeFactory;
+  private static Thread workerThread;
+  private static Thread signalingThread;
+
+  public static class Options {
+    // Keep in sync with webrtc/base/network.h!
+    public static final int ADAPTER_TYPE_UNKNOWN = 0;
+    public static final int ADAPTER_TYPE_ETHERNET = 1 << 0;
+    public static final int ADAPTER_TYPE_WIFI = 1 << 1;
+    public static final int ADAPTER_TYPE_CELLULAR = 1 << 2;
+    public static final int ADAPTER_TYPE_VPN = 1 << 3;
+    public static final int ADAPTER_TYPE_LOOPBACK = 1 << 4;
+
+    public int networkIgnoreMask;
+    public boolean disableEncryption;
+    public boolean disableNetworkMonitor;
+  }
+
+  // |context| is an android.content.Context object, but we keep it untyped here
+  // to allow building on non-Android platforms.
+  // Callers may specify either |initializeAudio| or |initializeVideo| as false
+  // to skip initializing the respective engine (and avoid the need for the
+  // respective permissions).
+  // |renderEGLContext| can be provided to suport HW video decoding to
+  // texture and will be used to create a shared EGL context on video
+  // decoding thread.
+  public static native boolean initializeAndroidGlobals(
+      Object context, boolean initializeAudio, boolean initializeVideo,
+      boolean videoHwAcceleration);
+
+  // Field trial initialization. Must be called before PeerConnectionFactory
+  // is created.
+  public static native void initializeFieldTrials(String fieldTrialsInitString);
+  // Internal tracing initialization. Must be called before PeerConnectionFactory is created to
+  // prevent racing with tracing code.
+  public static native void initializeInternalTracer();
+  // Internal tracing shutdown, called to prevent resource leaks. Must be called after
+  // PeerConnectionFactory is gone to prevent races with code performing tracing.
+  public static native void shutdownInternalTracer();
+  // Start/stop internal capturing of internal tracing.
+  public static native boolean startInternalTracingCapture(String tracing_filename);
+  public static native void stopInternalTracingCapture();
+
+  @Deprecated
+  public PeerConnectionFactory() {
+    this(null);
+  }
+
+  public PeerConnectionFactory(Options options) {
+    nativeFactory = nativeCreatePeerConnectionFactory(options);
+    if (nativeFactory == 0) {
+      throw new RuntimeException("Failed to initialize PeerConnectionFactory!");
     }
+  }
 
-    private final long nativeFactory;
-
-    public static class Options {
-        // Keep in sync with webrtc/base/network.h!
-        public static final int ADAPTER_TYPE_UNKNOWN = 0;
-        public static final int ADAPTER_TYPE_ETHERNET = 1 << 0;
-        public static final int ADAPTER_TYPE_WIFI = 1 << 1;
-        public static final int ADAPTER_TYPE_CELLULAR = 1 << 2;
-        public static final int ADAPTER_TYPE_VPN = 1 << 3;
-        public static final int ADAPTER_TYPE_LOOPBACK = 1 << 4;
-
-        public int networkIgnoreMask;
-        public boolean disableEncryption;
+  public PeerConnection createPeerConnection(
+      PeerConnection.RTCConfiguration rtcConfig,
+      MediaConstraints constraints,
+      PeerConnection.Observer observer) {
+    long nativeObserver = nativeCreateObserver(observer);
+    if (nativeObserver == 0) {
+      return null;
     }
+    long nativePeerConnection = nativeCreatePeerConnection(
+        nativeFactory, rtcConfig, constraints, nativeObserver);
+    if (nativePeerConnection == 0) {
+      return null;
+    }
+    return new PeerConnection(nativePeerConnection, nativeObserver);
+  }
 
-    // |context| is an android.content.Context object, but we keep it untyped here
-    // to allow building on non-Android platforms.
-    // Callers may specify either |initializeAudio| or |initializeVideo| as false
-    // to skip initializing the respective engine (and avoid the need for the
-    // respective permissions).
-    // |renderEGLContext| can be provided to suport HW video decoding to
-    // texture and will be used to create a shared EGL context on video
-    // decoding thread.
-    public static native boolean initializeAndroidGlobals(
-            Object context, boolean initializeAudio, boolean initializeVideo,
-            boolean videoHwAcceleration);
+  public PeerConnection createPeerConnection(
+      List<PeerConnection.IceServer> iceServers,
+      MediaConstraints constraints,
+      PeerConnection.Observer observer) {
+    PeerConnection.RTCConfiguration rtcConfig =
+        new PeerConnection.RTCConfiguration(iceServers);
+    return createPeerConnection(rtcConfig, constraints, observer);
+  }
 
-    // Field trial initialization. Must be called before PeerConnectionFactory
-    // is created.
-    public static native void initializeFieldTrials(String fieldTrialsInitString);
+  public MediaStream createLocalMediaStream(String label) {
+    return new MediaStream(
+        nativeCreateLocalMediaStream(nativeFactory, label));
+  }
 
-    public PeerConnectionFactory() {
-        nativeFactory = nativeCreatePeerConnectionFactory();
-        if (nativeFactory == 0) {
-            throw new RuntimeException("Failed to initialize PeerConnectionFactory!");
+  public VideoSource createVideoSource(
+      VideoCapturer capturer, MediaConstraints constraints) {
+    return new VideoSource(nativeCreateVideoSource(
+        nativeFactory, capturer.takeNativeVideoCapturer(), constraints));
+  }
+
+  public VideoTrack createVideoTrack(String id, VideoSource source) {
+    return new VideoTrack(nativeCreateVideoTrack(
+        nativeFactory, id, source.nativeSource));
+  }
+
+  public AudioSource createAudioSource(MediaConstraints constraints) {
+    return new AudioSource(nativeCreateAudioSource(nativeFactory, constraints));
+  }
+
+  public AudioTrack createAudioTrack(String id, AudioSource source) {
+    return new AudioTrack(nativeCreateAudioTrack(
+        nativeFactory, id, source.nativeSource));
+  }
+
+  // Starts recording an AEC dump. Ownership of the file is transfered to the
+  // native code. If an AEC dump is already in progress, it will be stopped and
+  // a new one will start using the provided file.
+  public boolean startAecDump(int file_descriptor, int filesize_limit_bytes) {
+    return nativeStartAecDump(nativeFactory, file_descriptor, filesize_limit_bytes);
+  }
+
+  // Stops recording an AEC dump. If no AEC dump is currently being recorded,
+  // this call will have no effect.
+  public void stopAecDump() {
+    nativeStopAecDump(nativeFactory);
+  }
+
+  // Starts recording an RTC event log. Ownership of the file is transfered to
+  // the native code. If an RTC event log is already being recorded, it will be
+  // stopped and a new one will start using the provided file.
+  public boolean startRtcEventLog(int file_descriptor) {
+    return nativeStartRtcEventLog(nativeFactory, file_descriptor);
+  }
+
+  // Stops recording an RTC event log. If no RTC event log is currently being
+  // recorded, this call will have no effect.
+  public void StopRtcEventLog() {
+    nativeStopRtcEventLog(nativeFactory);
+  }
+
+  @Deprecated
+  public void setOptions(Options options) {
+    nativeSetOptions(nativeFactory, options);
+  }
+
+  @Deprecated
+  public void setVideoHwAccelerationOptions(Object renderEGLContext) {
+    nativeSetVideoHwAccelerationOptions(nativeFactory, renderEGLContext, renderEGLContext);
+  }
+
+  /** Set the EGL context used by HW Video encoding and decoding.
+   *
+   *
+   * @param localEGLContext   An instance of javax.microedition.khronos.egl.EGLContext.
+   *                          Must be the same as used by VideoCapturerAndroid and any local
+   *                          video renderer.
+   * @param remoteEGLContext  An instance of javax.microedition.khronos.egl.EGLContext.
+   *                          Must be the same as used by any remote video renderer.
+   */
+  public void setVideoHwAccelerationOptions(Object localEGLContext, Object remoteEGLContext) {
+    nativeSetVideoHwAccelerationOptions(nativeFactory, localEGLContext, remoteEGLContext);
+  }
+
+  public void dispose() {
+    nativeFreeFactory(nativeFactory);
+    signalingThread = null;
+    workerThread = null;
+  }
+
+  public void threadsCallbacks() {
+    nativeThreadsCallbacks(nativeFactory);
+  }
+
+  private static void printStackTrace(Thread thread, String threadName) {
+    if (thread != null) {
+      StackTraceElement[] stackTraces = thread.getStackTrace();
+      if (stackTraces.length > 0) {
+        Logging.d(TAG, threadName + " stacks trace:");
+        for (StackTraceElement stackTrace : stackTraces) {
+          Logging.d(TAG, stackTrace.toString());
         }
+      }
     }
+  }
 
-    public PeerConnection createPeerConnection(
-            PeerConnection.RTCConfiguration rtcConfig,
-            MediaConstraints constraints,
-            PeerConnection.Observer observer) {
-        long nativeObserver = nativeCreateObserver(observer);
-        if (nativeObserver == 0) {
-            return null;
-        }
-        long nativePeerConnection = nativeCreatePeerConnection(
-                nativeFactory, rtcConfig, constraints, nativeObserver);
-        if (nativePeerConnection == 0) {
-            return null;
-        }
-        return new PeerConnection(nativePeerConnection, nativeObserver);
-    }
+  public static void printStackTraces() {
+    printStackTrace(workerThread, "Worker thread");
+    printStackTrace(signalingThread, "Signaling thread");
+  }
 
-    public PeerConnection createPeerConnection(
-            List<PeerConnection.IceServer> iceServers,
-            MediaConstraints constraints,
-            PeerConnection.Observer observer) {
-        PeerConnection.RTCConfiguration rtcConfig =
-                new PeerConnection.RTCConfiguration(iceServers);
-        return createPeerConnection(rtcConfig, constraints, observer);
-    }
+  private static void onWorkerThreadReady() {
+    workerThread = Thread.currentThread();
+    Logging.d(TAG, "onWorkerThreadReady");
+  }
 
-    public MediaStream createLocalMediaStream(String label) {
-        return new MediaStream(
-                nativeCreateLocalMediaStream(nativeFactory, label));
-    }
+  private static void onSignalingThreadReady() {
+    signalingThread = Thread.currentThread();
+    Logging.d(TAG, "onSignalingThreadReady");
+  }
 
-    public VideoSource createVideoSource(
-            VideoCapturer capturer, MediaConstraints constraints) {
-        return new VideoSource(nativeCreateVideoSource(
-                nativeFactory, capturer.takeNativeVideoCapturer(), constraints));
-    }
+  private static native long nativeCreatePeerConnectionFactory(Options options);
 
-    public VideoTrack createVideoTrack(String id, VideoSource source) {
-        return new VideoTrack(nativeCreateVideoTrack(
-                nativeFactory, id, source.nativeSource));
-    }
+  private static native long nativeCreateObserver(
+      PeerConnection.Observer observer);
 
-    public AudioSource createAudioSource(MediaConstraints constraints) {
-        return new AudioSource(nativeCreateAudioSource(nativeFactory, constraints));
-    }
+  private static native long nativeCreatePeerConnection(
+      long nativeFactory, PeerConnection.RTCConfiguration rtcConfig,
+      MediaConstraints constraints, long nativeObserver);
 
-    public AudioTrack createAudioTrack(String id, AudioSource source) {
-        return new AudioTrack(nativeCreateAudioTrack(
-                nativeFactory, id, source.nativeSource));
-    }
+  private static native long nativeCreateLocalMediaStream(
+      long nativeFactory, String label);
 
-    public void setOptions(Options options) {
-        nativeSetOptions(nativeFactory, options);
-    }
+  private static native long nativeCreateVideoSource(
+      long nativeFactory, long nativeVideoCapturer,
+      MediaConstraints constraints);
 
-    public void setVideoHwAccelerationOptions(Object renderEGLContext) {
-        nativeSetVideoHwAccelerationOptions(nativeFactory, renderEGLContext);
-    }
+  private static native long nativeCreateVideoTrack(
+      long nativeFactory, String id, long nativeVideoSource);
 
-    public void dispose() {
-        freeFactory(nativeFactory);
-    }
+  private static native long nativeCreateAudioSource(
+      long nativeFactory, MediaConstraints constraints);
 
-    private static native long nativeCreatePeerConnectionFactory();
+  private static native long nativeCreateAudioTrack(
+      long nativeFactory, String id, long nativeSource);
 
-    private static native long nativeCreateObserver(
-            PeerConnection.Observer observer);
+  private static native boolean nativeStartAecDump(
+      long nativeFactory, int file_descriptor, int filesize_limit_bytes);
 
-    private static native long nativeCreatePeerConnection(
-            long nativeFactory, PeerConnection.RTCConfiguration rtcConfig,
-            MediaConstraints constraints, long nativeObserver);
+  private static native void nativeStopAecDump(long nativeFactory);
 
-    private static native long nativeCreateLocalMediaStream(
-            long nativeFactory, String label);
+  private static native boolean nativeStartRtcEventLog(long nativeFactory, int file_descriptor);
 
-    private static native long nativeCreateVideoSource(
-            long nativeFactory, long nativeVideoCapturer,
-            MediaConstraints constraints);
+  private static native void nativeStopRtcEventLog(long nativeFactory);
 
-    private static native long nativeCreateVideoTrack(
-            long nativeFactory, String id, long nativeVideoSource);
+  @Deprecated
+  public native void nativeSetOptions(long nativeFactory, Options options);
 
-    private static native long nativeCreateAudioSource(
-            long nativeFactory, MediaConstraints constraints);
+  private static native void nativeSetVideoHwAccelerationOptions(
+      long nativeFactory, Object localEGLContext, Object remoteEGLContext);
 
-    private static native long nativeCreateAudioTrack(
-            long nativeFactory, String id, long nativeSource);
+  private static native void nativeThreadsCallbacks(long nativeFactory);
 
-    public native void nativeSetOptions(long nativeFactory, Options options);
-
-    private static native void nativeSetVideoHwAccelerationOptions(
-            long nativeFactory, Object renderEGLContext);
-
-    private static native void freeFactory(long nativeFactory);
+  private static native void nativeFreeFactory(long nativeFactory);
 }

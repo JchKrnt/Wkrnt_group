@@ -61,7 +61,7 @@ public class RoomController implements KGroupSocketClient.KGroupInternalEvents, 
     public RoomController(Context context, String roomName) {
         this.context = context;
         this.roomName = roomName;
-        eglBase = new EglBase();
+        eglBase = EglBase.create();
 
         socketClient = KGroupSocketClient.getInstance();
         socketClient.setInternalEvents(this);

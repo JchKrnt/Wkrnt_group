@@ -56,7 +56,7 @@ public class VideoRecycleAdapter extends RecyclerView.Adapter<VideoRecycleAdapte
     public VideoHolder onCreateViewHolder(ViewGroup parent, int viewType) {
         LogCat.debug(TAG + " onCreateViewHolder position ");
         VideoHolder viewHolder = new VideoHolder(LayoutInflater.from(context).inflate(R.layout.video_item, parent, false));
-        viewHolder.videoview.init(data.get(0).getEglBase().getContext(), new PVideoRenderEvents());
+        viewHolder.videoview.init(data.get(0).getEglBase().getEglBaseContext(), new PVideoRenderEvents());
 
         return viewHolder;
     }

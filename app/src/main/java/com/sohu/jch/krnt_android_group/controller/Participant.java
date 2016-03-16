@@ -5,7 +5,7 @@ import android.content.Context;
 import com.sohu.jch.krnt_android_group.view.play.PercentFrameLayout;
 import com.sohu.kurento.bean.VideoViewParam;
 import com.sohu.kurento.group.KPeerConnectionClient;
-import com.sohu.kurento.group.KPeerConnectionClient.ConnectionType;
+import com.sohu.kurento.group.KPeerConnectionClient.*;
 import com.sohu.kurento.util.LogCat;
 import com.sohu.kurento.util.SinglExecterPool;
 
@@ -130,7 +130,7 @@ public class Participant implements KPeerConnectionClient.KPeerConnectionEvents 
     public void createPeerConnection(
             List<PeerConnection.IceServer> iceServers) {
 
-        peer.createPeerConnection(eglBase.getContext(), connectionType, iceServers);
+        peer.createPeerConnection(eglBase.getEglBaseContext(), connectionType, iceServers);
     }
 
     public void startCall() {

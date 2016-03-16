@@ -1,7 +1,5 @@
 package com.sohu.jch.krnt_android_group.model;
 
-import android.view.View;
-
 import com.sohu.jch.krnt_android_group.view.play.PercentFrameLayout;
 
 import org.webrtc.SurfaceViewRenderer;

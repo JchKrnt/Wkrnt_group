@@ -31,18 +31,16 @@ import java.util.ArrayList;
 import java.util.concurrent.CountDownLatch;
 
 import javax.microedition.khronos.egl.EGLConfig;
+import javax.microedition.khronos.egl.EGL10;
+import javax.microedition.khronos.egl.EGLContext;
 import javax.microedition.khronos.opengles.GL10;
 
 import android.annotation.SuppressLint;
 import android.graphics.Point;
 import android.graphics.Rect;
-import android.graphics.SurfaceTexture;
 import android.opengl.EGL14;
-import android.opengl.EGLContext;
 import android.opengl.GLES20;
 import android.opengl.GLSurfaceView;
-import android.opengl.Matrix;
-import android.util.Log;
 
 import org.webrtc.Logging;
 import org.webrtc.VideoRenderer.I420Frame;
@@ -61,7 +59,7 @@ public class VideoRendererGui implements GLSurfaceView.Renderer {
   private static Runnable eglContextReady = null;
   private static final String TAG = "VideoRendererGui";
   private GLSurfaceView surface;
-  private static EGLContext eglContext = null;
+  private static EglBase.Context eglContext = null;
   // Indicates if SurfaceView.Renderer.onSurfaceCreated was called.
   // If true then for every newly created yuv image renderer createTexture()
   // should be called. The variable is accessed on multiple threads and
@@ -71,13 +69,9 @@ public class VideoRendererGui implements GLSurfaceView.Renderer {
   private int screenHeight;
   // List of yuv renderers.
   private final ArrayList<YuvImageRenderer> yuvImageRenderers;
-  // |drawer| is synchronized on |yuvImageRenderers|.
-  private GlRectDrawer drawer;
-  private static final int EGL14_SDK_VERSION =
-      android.os.Build.VERSION_CODES.JELLY_BEAN_MR1;
-  // Current SDK version.
-  private static final int CURRENT_SDK_VERSION =
-      android.os.Build.VERSION.SDK_INT;
+  // Render and draw threads.
+  private static Thread renderFrameThread;
+  private static Thread drawThread;
 
   private VideoRendererGui(GLSurfaceView surface) {
     this.surface = surface;
@@ -99,9 +93,14 @@ public class VideoRendererGui implements GLSurfaceView.Renderer {
     // |surface| is synchronized on |this|.
     private GLSurfaceView surface;
     private int id;
-    // TODO(magjed): Delete |yuvTextures| in release(). Must be synchronized with draw().
+    // TODO(magjed): Delete GL resources in release(). Must be synchronized with draw(). We are
+    // currently leaking resources to avoid a rare crash in release() where the EGLContext has
+    // become invalid beforehand.
     private int[] yuvTextures = { 0, 0, 0 };
-    private int oesTexture = 0;
+    private final RendererCommon.YuvUploader yuvUploader = new RendererCommon.YuvUploader();
+    private final RendererCommon.GlDrawer drawer;
+    // Resources for making a deep copy of incoming OES texture frame.
+    private GlTextureFrameBuffer textureCopy;
 
     // Pending frame to render. Serves as a queue with size 1. |pendingFrame| is accessed by two
     // threads - frames are received in renderFrame() and consumed in draw(). Frames are dropped in
@@ -158,19 +157,25 @@ public class VideoRendererGui implements GLSurfaceView.Renderer {
     private YuvImageRenderer(
         GLSurfaceView surface, int id,
         int x, int y, int width, int height,
-        RendererCommon.ScalingType scalingType, boolean mirror) {
+        RendererCommon.ScalingType scalingType, boolean mirror, RendererCommon.GlDrawer drawer) {
       Logging.d(TAG, "YuvImageRenderer.Create id: " + id);
       this.surface = surface;
       this.id = id;
       this.scalingType = scalingType;
       this.mirror = mirror;
+      this.drawer = drawer;
       layoutInPercentage = new Rect(x, y, Math.min(100, x + width), Math.min(100, y + height));
       updateLayoutProperties = false;
       rotationDegree = 0;
     }
 
+    public synchronized void reset() {
+      seenFrame = false;
+    }
+
     private synchronized void release() {
       surface = null;
+      drawer.release();
       synchronized (pendingFrameLock) {
         if (pendingFrame != null) {
           VideoRenderer.renderFrameDone(pendingFrame);
@@ -187,6 +192,8 @@ public class VideoRendererGui implements GLSurfaceView.Renderer {
       for (int i = 0; i < 3; i++)  {
         yuvTextures[i] = GlUtil.generateTexture(GLES20.GL_TEXTURE_2D);
       }
+      // Generate texture and framebuffer for offscreen texture copy.
+      textureCopy = new GlTextureFrameBuffer(GLES20.GL_RGB);
     }
 
     private void updateLayoutMatrix() {
@@ -221,16 +228,12 @@ public class VideoRendererGui implements GLSurfaceView.Renderer {
       }
     }
 
-    private void draw(GlRectDrawer drawer) {
+    private void draw() {
       if (!seenFrame) {
         // No frame received yet - nothing to render.
         return;
       }
       long now = System.nanoTime();
-
-      // OpenGL defaults to lower left origin.
-      GLES20.glViewport(displayLayout.left, screenHeight - displayLayout.bottom,
-                        displayLayout.width(), displayLayout.height());
 
       final boolean isNewFrame;
       synchronized (pendingFrameLock) {
@@ -240,29 +243,31 @@ public class VideoRendererGui implements GLSurfaceView.Renderer {
         }
 
         if (isNewFrame) {
-          final float[] samplingMatrix;
+          rotatedSamplingMatrix = RendererCommon.rotateTextureMatrix(
+              pendingFrame.samplingMatrix, pendingFrame.rotationDegree);
           if (pendingFrame.yuvFrame) {
             rendererType = RendererType.RENDERER_YUV;
-            drawer.uploadYuvData(yuvTextures, pendingFrame.width, pendingFrame.height,
+            yuvUploader.uploadYuvData(yuvTextures, pendingFrame.width, pendingFrame.height,
                 pendingFrame.yuvStrides, pendingFrame.yuvPlanes);
-            // The convention in WebRTC is that the first element in a ByteBuffer corresponds to the
-            // top-left corner of the image, but in glTexImage2D() the first element corresponds to
-            // the bottom-left corner. We correct this discrepancy by setting a vertical flip as
-            // sampling matrix.
-            samplingMatrix = RendererCommon.verticalFlipMatrix();
           } else {
             rendererType = RendererType.RENDERER_TEXTURE;
-            // External texture rendering. Copy texture id and update texture image to latest.
-            // TODO(magjed): We should not make an unmanaged copy of texture id. Also, this is not
-            // the best place to call updateTexImage.
-            oesTexture = pendingFrame.textureId;
-            final SurfaceTexture surfaceTexture = (SurfaceTexture) pendingFrame.textureObject;
-            surfaceTexture.updateTexImage();
-            samplingMatrix = new float[16];
-            surfaceTexture.getTransformMatrix(samplingMatrix);
+            // External texture rendering. Make a deep copy of the external texture.
+            // Reallocate offscreen texture if necessary.
+            textureCopy.setSize(pendingFrame.rotatedWidth(), pendingFrame.rotatedHeight());
+
+            // Bind our offscreen framebuffer.
+            GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, textureCopy.getFrameBufferId());
+            GlUtil.checkNoGLES2Error("glBindFramebuffer");
+
+            // Copy the OES texture content. This will also normalize the sampling matrix.
+             drawer.drawOes(pendingFrame.textureId, rotatedSamplingMatrix,
+                 0, 0, textureCopy.getWidth(), textureCopy.getHeight());
+             rotatedSamplingMatrix = RendererCommon.identityMatrix();
+
+             // Restore normal framebuffer.
+             GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, 0);
+             GLES20.glFinish();
           }
-          rotatedSamplingMatrix = RendererCommon.rotateTextureMatrix(
-              samplingMatrix, pendingFrame.rotationDegree);
           copyTimeNs += (System.nanoTime() - now);
           VideoRenderer.renderFrameDone(pendingFrame);
           pendingFrame = null;
@@ -272,10 +277,14 @@ public class VideoRendererGui implements GLSurfaceView.Renderer {
       updateLayoutMatrix();
       final float[] texMatrix =
           RendererCommon.multiplyMatrices(rotatedSamplingMatrix, layoutMatrix);
+      // OpenGL defaults to lower left origin - flip viewport position vertically.
+      final int viewportY = screenHeight - displayLayout.bottom;
       if (rendererType == RendererType.RENDERER_YUV) {
-        drawer.drawYuv(yuvTextures, texMatrix);
+        drawer.drawYuv(yuvTextures, texMatrix,
+            displayLayout.left, viewportY, displayLayout.width(), displayLayout.height());
       } else {
-        drawer.drawOes(oesTexture, texMatrix);
+        drawer.drawRgb(textureCopy.getTextureId(), texMatrix,
+            displayLayout.left, viewportY, displayLayout.width(), displayLayout.height());
       }
 
       if (isNewFrame) {
@@ -294,7 +303,7 @@ public class VideoRendererGui implements GLSurfaceView.Renderer {
           ". Dropped: " + framesDropped + ". Rendered: " + framesRendered);
       if (framesReceived > 0 && framesRendered > 0) {
         Logging.d(TAG, "Duration: " + (int)(timeSinceFirstFrameNs / 1e6) +
-            " ms. FPS: " + (float)framesRendered * 1e9 / timeSinceFirstFrameNs);
+            " ms. FPS: " + framesRendered * 1e9 / timeSinceFirstFrameNs);
         Logging.d(TAG, "Draw time: " +
             (int) (drawTimeNs / (1000 * framesRendered)) + " us. Copy time: " +
             (int) (copyTimeNs / (1000 * framesReceived)) + " us");
@@ -363,6 +372,9 @@ public class VideoRendererGui implements GLSurfaceView.Renderer {
         VideoRenderer.renderFrameDone(frame);
         return;
       }
+      if (renderFrameThread == null) {
+        renderFrameThread = Thread.currentThread();
+      }
       if (!seenFrame && rendererEvents != null) {
         Logging.d(TAG, "ID: " + id + ". Reporting first rendered frame.");
         rendererEvents.onFirstFrameRendered();
@@ -385,6 +397,7 @@ public class VideoRendererGui implements GLSurfaceView.Renderer {
           // Skip rendering of this frame if previous frame was not rendered yet.
           framesDropped++;
           VideoRenderer.renderFrameDone(frame);
+          seenFrame = true;
           return;
         }
         pendingFrame = frame;
@@ -405,7 +418,7 @@ public class VideoRendererGui implements GLSurfaceView.Renderer {
     eglContextReady = eglContextReadyCallback;
   }
 
-  public static synchronized EGLContext getEGLContext() {
+  public static synchronized EglBase.Context getEglBaseContext() {
     return eglContext;
   }
 
@@ -421,6 +434,8 @@ public class VideoRendererGui implements GLSurfaceView.Renderer {
       }
       instance.yuvImageRenderers.clear();
     }
+    renderFrameThread = null;
+    drawThread = null;
     instance.surface = null;
     eglContext = null;
     eglContextReady = null;
@@ -451,6 +466,16 @@ public class VideoRendererGui implements GLSurfaceView.Renderer {
    */
   public static synchronized YuvImageRenderer create(int x, int y, int width, int height,
       RendererCommon.ScalingType scalingType, boolean mirror) {
+    return create(x, y, width, height, scalingType, mirror, new GlRectDrawer());
+  }
+
+  /**
+   * Creates VideoRenderer.Callbacks with top left corner at (x, y) and resolution (width, height).
+   * All parameters are in percentage of screen resolution. The custom |drawer| will be used for
+   * drawing frames on the EGLSurface. This class is responsible for calling release() on |drawer|.
+   */
+  public static synchronized YuvImageRenderer create(int x, int y, int width, int height,
+      RendererCommon.ScalingType scalingType, boolean mirror, RendererCommon.GlDrawer drawer) {
     // Check display region parameters.
     if (x < 0 || x > 100 || y < 0 || y > 100 ||
         width < 0 || width > 100 || height < 0 || height > 100 ||
@@ -464,7 +489,7 @@ public class VideoRendererGui implements GLSurfaceView.Renderer {
     }
     final YuvImageRenderer yuvImageRenderer = new YuvImageRenderer(
         instance.surface, instance.yuvImageRenderers.size(),
-        x, y, width, height, scalingType, mirror);
+        x, y, width, height, scalingType, mirror, drawer);
     synchronized (instance.yuvImageRenderers) {
       if (instance.onSurfaceCreatedCalled) {
         // onSurfaceCreated has already been called for VideoRendererGui -
@@ -472,6 +497,7 @@ public class VideoRendererGui implements GLSurfaceView.Renderer {
         // rendering list.
         final CountDownLatch countDownLatch = new CountDownLatch(1);
         instance.surface.queueEvent(new Runnable() {
+          @Override
           public void run() {
             yuvImageRenderer.createTextures();
             yuvImageRenderer.setScreenSize(
@@ -529,7 +555,7 @@ public class VideoRendererGui implements GLSurfaceView.Renderer {
     Logging.d(TAG, "VideoRendererGui.remove");
     if (instance == null) {
       throw new RuntimeException(
-          "Attempt to remove yuv renderer before setting GLSurfaceView");
+          "Attempt to remove renderer before setting GLSurfaceView");
     }
     synchronized (instance.yuvImageRenderers) {
       final int index = instance.yuvImageRenderers.indexOf(renderer);
@@ -541,21 +567,57 @@ public class VideoRendererGui implements GLSurfaceView.Renderer {
     }
   }
 
+  public static synchronized void reset(VideoRenderer.Callbacks renderer) {
+    Logging.d(TAG, "VideoRendererGui.reset");
+    if (instance == null) {
+      throw new RuntimeException(
+          "Attempt to reset renderer before setting GLSurfaceView");
+    }
+    synchronized (instance.yuvImageRenderers) {
+      for (YuvImageRenderer yuvImageRenderer : instance.yuvImageRenderers) {
+        if (yuvImageRenderer == renderer) {
+          yuvImageRenderer.reset();
+        }
+      }
+    }
+  }
+
+  private static void printStackTrace(Thread thread, String threadName) {
+    if (thread != null) {
+      StackTraceElement[] stackTraces = thread.getStackTrace();
+      if (stackTraces.length > 0) {
+        Logging.d(TAG, threadName + " stacks trace:");
+        for (StackTraceElement stackTrace : stackTraces) {
+          Logging.d(TAG, stackTrace.toString());
+        }
+      }
+    }
+  }
+
+  public static synchronized void printStackTraces() {
+    if (instance == null) {
+      return;
+    }
+    printStackTrace(renderFrameThread, "Render frame thread");
+    printStackTrace(drawThread, "Draw thread");
+  }
+
   @SuppressLint("NewApi")
   @Override
   public void onSurfaceCreated(GL10 unused, EGLConfig config) {
     Logging.d(TAG, "VideoRendererGui.onSurfaceCreated");
     // Store render EGL context.
-    if (CURRENT_SDK_VERSION >= EGL14_SDK_VERSION) {
-      synchronized (VideoRendererGui.class) {
-        eglContext = EGL14.eglGetCurrentContext();
-        Logging.d(TAG, "VideoRendererGui EGL Context: " + eglContext);
+    synchronized (VideoRendererGui.class) {
+      if (EglBase14.isEGL14Supported()) {
+        eglContext = new EglBase14.Context(EGL14.eglGetCurrentContext());
+      } else {
+        eglContext = new EglBase10.Context(((EGL10) EGLContext.getEGL()).eglGetCurrentContext());
       }
+
+      Logging.d(TAG, "VideoRendererGui EGL Context: " + eglContext);
     }
 
     synchronized (yuvImageRenderers) {
-      // Create drawer for YUV/OES frames.
-      drawer = new GlRectDrawer();
       // Create textures for all images.
       for (YuvImageRenderer yuvImageRenderer : yuvImageRenderers) {
         yuvImageRenderer.createTextures();
@@ -589,11 +651,14 @@ public class VideoRendererGui implements GLSurfaceView.Renderer {
 
   @Override
   public void onDrawFrame(GL10 unused) {
+    if (drawThread == null) {
+      drawThread = Thread.currentThread();
+    }
     GLES20.glViewport(0, 0, screenWidth, screenHeight);
     GLES20.glClear(GLES20.GL_COLOR_BUFFER_BIT);
     synchronized (yuvImageRenderers) {
       for (YuvImageRenderer yuvImageRenderer : yuvImageRenderers) {
-        yuvImageRenderer.draw(drawer);
+        yuvImageRenderer.draw();
       }
     }
   }

@@ -28,7 +28,7 @@
 
 package org.webrtc;
 
-import java.util.ArrayList;
+import java.util.Collections;
 import java.util.LinkedList;
 import java.util.List;
 
@@ -39,283 +39,267 @@ import java.util.List;
  * http://www.w3.org/TR/mediacapture-streams/
  */
 public class PeerConnection {
-    static {
-        System.loadLibrary("jingle_peerconnection_so");
+  static {
+    System.loadLibrary("jingle_peerconnection_so");
+  }
+
+  /** Tracks PeerConnectionInterface::IceGatheringState */
+  public enum IceGatheringState { NEW, GATHERING, COMPLETE };
+
+
+  /** Tracks PeerConnectionInterface::IceConnectionState */
+  public enum IceConnectionState {
+    NEW, CHECKING, CONNECTED, COMPLETED, FAILED, DISCONNECTED, CLOSED
+  };
+
+  /** Tracks PeerConnectionInterface::SignalingState */
+  public enum SignalingState {
+    STABLE, HAVE_LOCAL_OFFER, HAVE_LOCAL_PRANSWER, HAVE_REMOTE_OFFER,
+    HAVE_REMOTE_PRANSWER, CLOSED
+  };
+
+  /** Java version of PeerConnectionObserver. */
+  public static interface Observer {
+    /** Triggered when the SignalingState changes. */
+    public void onSignalingChange(SignalingState newState);
+
+    /** Triggered when the IceConnectionState changes. */
+    public void onIceConnectionChange(IceConnectionState newState);
+
+    /** Triggered when the ICE connection receiving status changes. */
+    public void onIceConnectionReceivingChange(boolean receiving);
+
+    /** Triggered when the IceGatheringState changes. */
+    public void onIceGatheringChange(IceGatheringState newState);
+
+    /** Triggered when a new ICE candidate has been found. */
+    public void onIceCandidate(IceCandidate candidate);
+
+    /** Triggered when media is received on a new stream from remote peer. */
+    public void onAddStream(MediaStream stream);
+
+    /** Triggered when a remote peer close a stream. */
+    public void onRemoveStream(MediaStream stream);
+
+    /** Triggered when a remote peer opens a DataChannel. */
+    public void onDataChannel(DataChannel dataChannel);
+
+    /** Triggered when renegotiation is necessary. */
+    public void onRenegotiationNeeded();
+  }
+
+  /** Java version of PeerConnectionInterface.IceServer. */
+  public static class IceServer {
+    public final String uri;
+    public final String username;
+    public final String password;
+
+    /** Convenience constructor for STUN servers. */
+    public IceServer(String uri) {
+      this(uri, "", "");
     }
 
-    /**
-     * Tracks PeerConnectionInterface::IceGatheringState
-     */
-    public enum IceGatheringState {
-        NEW, GATHERING, COMPLETE
+    public IceServer(String uri, String username, String password) {
+      this.uri = uri;
+      this.username = username;
+      this.password = password;
     }
 
-    ;
-
-
-    /**
-     * Tracks PeerConnectionInterface::IceConnectionState
-     */
-    public enum IceConnectionState {
-        NEW, CHECKING, CONNECTED, COMPLETED, FAILED, DISCONNECTED, CLOSED
+    public String toString() {
+      return uri + "[" + username + ":" + password + "]";
     }
+  }
 
-    ;
+  /** Java version of PeerConnectionInterface.IceTransportsType */
+  public enum IceTransportsType {
+    NONE, RELAY, NOHOST, ALL
+  };
 
-    /**
-     * Tracks PeerConnectionInterface::SignalingState
-     */
-    public enum SignalingState {
-        STABLE, HAVE_LOCAL_OFFER, HAVE_LOCAL_PRANSWER, HAVE_REMOTE_OFFER,
-        HAVE_REMOTE_PRANSWER, CLOSED
+  /** Java version of PeerConnectionInterface.BundlePolicy */
+  public enum BundlePolicy {
+    BALANCED, MAXBUNDLE, MAXCOMPAT
+  };
+
+  /** Java version of PeerConnectionInterface.RtcpMuxPolicy */
+  public enum RtcpMuxPolicy {
+    NEGOTIATE, REQUIRE
+  };
+
+  /** Java version of PeerConnectionInterface.TcpCandidatePolicy */
+  public enum TcpCandidatePolicy {
+    ENABLED, DISABLED
+  };
+
+  /** Java version of rtc::KeyType */
+  public enum KeyType {
+    RSA, ECDSA
+  }
+
+  /** Java version of PeerConnectionInterface.ContinualGatheringPolicy */
+  public enum ContinualGatheringPolicy {
+    GATHER_ONCE, GATHER_CONTINUALLY
+  }
+
+  /** Java version of PeerConnectionInterface.RTCConfiguration */
+  public static class RTCConfiguration {
+    public IceTransportsType iceTransportsType;
+    public List<IceServer> iceServers;
+    public BundlePolicy bundlePolicy;
+    public RtcpMuxPolicy rtcpMuxPolicy;
+    public TcpCandidatePolicy tcpCandidatePolicy;
+    public int audioJitterBufferMaxPackets;
+    public boolean audioJitterBufferFastAccelerate;
+    public int iceConnectionReceivingTimeout;
+    public int iceBackupCandidatePairPingInterval;
+    public KeyType keyType;
+    public ContinualGatheringPolicy continualGatheringPolicy;
+
+    public RTCConfiguration(List<IceServer> iceServers) {
+      iceTransportsType = IceTransportsType.ALL;
+      bundlePolicy = BundlePolicy.BALANCED;
+      rtcpMuxPolicy = RtcpMuxPolicy.NEGOTIATE;
+      tcpCandidatePolicy = TcpCandidatePolicy.ENABLED;
+      this.iceServers = iceServers;
+      audioJitterBufferMaxPackets = 50;
+      audioJitterBufferFastAccelerate = false;
+      iceConnectionReceivingTimeout = -1;
+      iceBackupCandidatePairPingInterval = -1;
+      keyType = KeyType.ECDSA;
+      continualGatheringPolicy = ContinualGatheringPolicy.GATHER_ONCE;
     }
+  };
 
-    ;
+  private final List<MediaStream> localStreams;
+  private final long nativePeerConnection;
+  private final long nativeObserver;
+  private List<RtpSender> senders;
+  private List<RtpReceiver> receivers;
 
-    /**
-     * Java version of PeerConnectionObserver.
-     */
-    public static interface Observer {
-        /**
-         * Triggered when the SignalingState changes.
-         */
-        public void onSignalingChange(SignalingState newState);
+  PeerConnection(long nativePeerConnection, long nativeObserver) {
+    this.nativePeerConnection = nativePeerConnection;
+    this.nativeObserver = nativeObserver;
+    localStreams = new LinkedList<MediaStream>();
+    senders = new LinkedList<RtpSender>();
+    receivers = new LinkedList<RtpReceiver>();
+  }
 
-        /**
-         * Triggered when the IceConnectionState changes.
-         */
-        public void onIceConnectionChange(IceConnectionState newState);
+  // JsepInterface.
+  public native SessionDescription getLocalDescription();
 
-        /**
-         * Triggered when the ICE connection receiving status changes.
-         */
-        public void onIceConnectionReceivingChange(boolean receiving);
+  public native SessionDescription getRemoteDescription();
 
-        /**
-         * Triggered when the IceGatheringState changes.
-         */
-        public void onIceGatheringChange(IceGatheringState newState);
+  public native DataChannel createDataChannel(
+      String label, DataChannel.Init init);
 
-        /**
-         * Triggered when a new ICE candidate has been found.
-         */
-        public void onIceCandidate(IceCandidate candidate);
+  public native void createOffer(
+      SdpObserver observer, MediaConstraints constraints);
 
-        /**
-         * Triggered when media is received on a new stream from remote peer.
-         */
-        public void onAddStream(MediaStream stream);
+  public native void createAnswer(
+      SdpObserver observer, MediaConstraints constraints);
 
-        /**
-         * Triggered when a remote peer close a stream.
-         */
-        public void onRemoveStream(MediaStream stream);
+  public native void setLocalDescription(
+      SdpObserver observer, SessionDescription sdp);
 
-        /**
-         * Triggered when a remote peer opens a DataChannel.
-         */
-        public void onDataChannel(DataChannel dataChannel);
+  public native void setRemoteDescription(
+      SdpObserver observer, SessionDescription sdp);
 
-        /**
-         * Triggered when renegotiation is necessary.
-         */
-        public void onRenegotiationNeeded();
+  public native boolean setConfiguration(RTCConfiguration config);
+
+  public boolean addIceCandidate(IceCandidate candidate) {
+    return nativeAddIceCandidate(
+        candidate.sdpMid, candidate.sdpMLineIndex, candidate.sdp);
+  }
+
+  public boolean addStream(MediaStream stream) {
+    boolean ret = nativeAddLocalStream(stream.nativeStream);
+    if (!ret) {
+      return false;
     }
+    localStreams.add(stream);
+    return true;
+  }
 
-    /**
-     * Java version of PeerConnectionInterface.IceServer.
-     */
-    public static class IceServer {
-        public final String uri;
-        public final String username;
-        public final String password;
+  public void removeStream(MediaStream stream) {
+    nativeRemoveLocalStream(stream.nativeStream);
+    localStreams.remove(stream);
+  }
 
-        /**
-         * Convenience constructor for STUN servers.
-         */
-        public IceServer(String uri) {
-            this(uri, "", "");
-        }
-
-        public IceServer(String uri, String username, String password) {
-            this.uri = uri;
-            this.username = username;
-            this.password = password;
-        }
-
-        public String toString() {
-            return uri + "[" + username + ":" + password + "]";
-        }
+  public RtpSender createSender(String kind, String stream_id) {
+    RtpSender new_sender = nativeCreateSender(kind, stream_id);
+    if (new_sender != null) {
+      senders.add(new_sender);
     }
+    return new_sender;
+  }
 
-    /**
-     * Java version of PeerConnectionInterface.IceTransportsType
-     */
-    public enum IceTransportsType {
-        NONE, RELAY, NOHOST, ALL
+  // Note that calling getSenders will dispose of the senders previously
+  // returned (and same goes for getReceivers).
+  public List<RtpSender> getSenders() {
+    for (RtpSender sender : senders) {
+      sender.dispose();
     }
+    senders = nativeGetSenders();
+    return Collections.unmodifiableList(senders);
+  }
 
-    ;
-
-    /**
-     * Java version of PeerConnectionInterface.BundlePolicy
-     */
-    public enum BundlePolicy {
-        BALANCED, MAXBUNDLE, MAXCOMPAT
+  public List<RtpReceiver> getReceivers() {
+    for (RtpReceiver receiver : receivers) {
+      receiver.dispose();
     }
+    receivers = nativeGetReceivers();
+    return Collections.unmodifiableList(receivers);
+  }
 
-    ;
+  public boolean getStats(StatsObserver observer, MediaStreamTrack track) {
+    return nativeGetStats(observer, (track == null) ? 0 : track.nativeTrack);
+  }
 
-    /**
-     * Java version of PeerConnectionInterface.RtcpMuxPolicy
-     */
-    public enum RtcpMuxPolicy {
-        NEGOTIATE, REQUIRE
+  // TODO(fischman): add support for DTMF-related methods once that API
+  // stabilizes.
+  public native SignalingState signalingState();
+
+  public native IceConnectionState iceConnectionState();
+
+  public native IceGatheringState iceGatheringState();
+
+  public native void close();
+
+  public void dispose() {
+    close();
+    for (MediaStream stream : localStreams) {
+      nativeRemoveLocalStream(stream.nativeStream);
+      stream.dispose();
     }
-
-    ;
-
-    /**
-     * Java version of PeerConnectionInterface.TcpCandidatePolicy
-     */
-    public enum TcpCandidatePolicy {
-        ENABLED, DISABLED
+    localStreams.clear();
+    for (RtpSender sender : senders) {
+      sender.dispose();
     }
-
-    ;
-
-    /**
-     * Java version of rtc::KeyType
-     */
-    public enum KeyType {
-        RSA, ECDSA
+    senders.clear();
+    for (RtpReceiver receiver : receivers) {
+      receiver.dispose();
     }
+    receivers.clear();
+    freePeerConnection(nativePeerConnection);
+    freeObserver(nativeObserver);
+  }
 
-    /**
-     * Java version of PeerConnectionInterface.ContinualGatheringPolicy
-     */
-    public enum ContinualGatheringPolicy {
-        GATHER_ONCE, GATHER_CONTINUALLY
-    }
+  private static native void freePeerConnection(long nativePeerConnection);
 
-    /**
-     * Java version of PeerConnectionInterface.RTCConfiguration
-     */
-    public static class RTCConfiguration {
-        public IceTransportsType iceTransportsType;
-        public List<IceServer> iceServers;
-        public BundlePolicy bundlePolicy;
-        public RtcpMuxPolicy rtcpMuxPolicy;
-        public TcpCandidatePolicy tcpCandidatePolicy;
-        public int audioJitterBufferMaxPackets;
-        public boolean audioJitterBufferFastAccelerate;
-        public int iceConnectionReceivingTimeout;
-        public KeyType keyType;
-        public ContinualGatheringPolicy continualGatheringPolicy;
+  private static native void freeObserver(long nativeObserver);
 
-        public RTCConfiguration(List<IceServer> iceServers) {
-            iceTransportsType = IceTransportsType.ALL;
-            bundlePolicy = BundlePolicy.BALANCED;
-            rtcpMuxPolicy = RtcpMuxPolicy.NEGOTIATE;
-            tcpCandidatePolicy = TcpCandidatePolicy.ENABLED;
-            this.iceServers = iceServers;
-            audioJitterBufferMaxPackets = 50;
-            audioJitterBufferFastAccelerate = false;
-            iceConnectionReceivingTimeout = -1;
-            keyType = KeyType.ECDSA;
-            continualGatheringPolicy = ContinualGatheringPolicy.GATHER_ONCE;
-        }
-    }
+  private native boolean nativeAddIceCandidate(
+      String sdpMid, int sdpMLineIndex, String iceCandidateSdp);
 
-    ;
+  private native boolean nativeAddLocalStream(long nativeStream);
 
-    private final List<MediaStream> localStreams;
-    private final long nativePeerConnection;
-    private final long nativeObserver;
+  private native void nativeRemoveLocalStream(long nativeStream);
 
-    PeerConnection(long nativePeerConnection, long nativeObserver) {
-        this.nativePeerConnection = nativePeerConnection;
-        this.nativeObserver = nativeObserver;
-        localStreams = new LinkedList<MediaStream>();
-    }
+  private native boolean nativeGetStats(
+      StatsObserver observer, long nativeTrack);
 
-    // JsepInterface.
-    public native SessionDescription getLocalDescription();
+  private native RtpSender nativeCreateSender(String kind, String stream_id);
 
-    public native SessionDescription getRemoteDescription();
+  private native List<RtpSender> nativeGetSenders();
 
-    public native DataChannel createDataChannel(
-            String label, DataChannel.Init init);
-
-    public native void createOffer(
-            SdpObserver observer, MediaConstraints constraints);
-
-    public native void createAnswer(
-            SdpObserver observer, MediaConstraints constraints);
-
-    public native void setLocalDescription(
-            SdpObserver observer, SessionDescription sdp);
-
-    public native void setRemoteDescription(
-            SdpObserver observer, SessionDescription sdp);
-
-    public native boolean setConfiguration(RTCConfiguration config);
-
-    public boolean addIceCandidate(IceCandidate candidate) {
-        return nativeAddIceCandidate(
-                candidate.sdpMid, candidate.sdpMLineIndex, candidate.sdp);
-    }
-
-    public boolean addStream(MediaStream stream) {
-        boolean ret = nativeAddLocalStream(stream.nativeStream);
-        if (!ret) {
-            return false;
-        }
-        localStreams.add(stream);
-        return true;
-    }
-
-    public void removeStream(MediaStream stream) {
-        nativeRemoveLocalStream(stream.nativeStream);
-        localStreams.remove(stream);
-    }
-
-    public boolean getStats(StatsObserver observer, MediaStreamTrack track) {
-        return nativeGetStats(observer, (track == null) ? 0 : track.nativeTrack);
-    }
-
-    // TODO(fischman): add support for DTMF-related methods once that API
-    // stabilizes.
-    public native SignalingState signalingState();
-
-    public native IceConnectionState iceConnectionState();
-
-    public native IceGatheringState iceGatheringState();
-
-    public native void close();
-
-    public void dispose() {
-        close();
-        for (MediaStream stream : localStreams) {
-            nativeRemoveLocalStream(stream.nativeStream);
-            stream.dispose();
-        }
-        localStreams.clear();
-        freePeerConnection(nativePeerConnection);
-        freeObserver(nativeObserver);
-    }
-
-    private static native void freePeerConnection(long nativePeerConnection);
-
-    private static native void freeObserver(long nativeObserver);
-
-    private native boolean nativeAddIceCandidate(
-            String sdpMid, int sdpMLineIndex, String iceCandidateSdp);
-
-    private native boolean nativeAddLocalStream(long nativeStream);
-
-    private native void nativeRemoveLocalStream(long nativeStream);
-
-    private native boolean nativeGetStats(
-            StatsObserver observer, long nativeTrack);
+  private native List<RtpReceiver> nativeGetReceivers();
 }

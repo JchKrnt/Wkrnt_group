@@ -9,6 +9,7 @@ import com.sohu.kurento.util.LooperExecutor;
 
 import org.webrtc.CameraEnumerationAndroid;
 import org.webrtc.DataChannel;
+import org.webrtc.EglBase;
 import org.webrtc.IceCandidate;
 import org.webrtc.Logging;
 import org.webrtc.MediaCodecVideoEncoder;
@@ -201,7 +202,7 @@ public class KPeerConnectionClient {
     }
 
 
-    public void createPeerConnection(final EGLContext renderEGLContext, final ConnectionType connectionType,
+    public void createPeerConnection(final EglBase.Context renderEGLContext, final ConnectionType connectionType,
                                      final List<PeerConnection.IceServer> iceServers) {
 
         LogCat.debug(TAG + "----createPeerConnection");
@@ -305,7 +306,7 @@ public class KPeerConnectionClient {
 
     }
 
-    private void createPeerConnectionInternal(EGLContext renderEGLContext) {
+    private void createPeerConnectionInternal(EglBase.Context renderEGLContext) {
 
         LogCat.debug(TAG + " createPeerConnectionInternal");
         if (factory == null || isError) {
@@ -322,7 +323,7 @@ public class KPeerConnectionClient {
 
         if (videoCallEnabled) {
             LogCat.debug("EGLContext: " + renderEGLContext);
-            factory.setVideoHwAccelerationOptions(renderEGLContext);
+            factory.setVideoHwAccelerationOptions(renderEGLContext, renderEGLContext);
         }
 
         PeerConnection.RTCConfiguration rtcConfig =
@@ -1025,12 +1026,12 @@ public class KPeerConnectionClient {
         }
 
         @Override
-        public void onDataChannel(final DataChannel dc) {
-
+        public void onDataChannel(DataChannel dc) {
             LogCat.e(pcObserverLogMsg + "onDataChannel DataChannel : " + dc.label());
             reportError("AppRTC doesn't use data channels, but got: " + dc.label()
                     + " anyway!");
         }
+
 
         @Override
         public void onRenegotiationNeeded() {
