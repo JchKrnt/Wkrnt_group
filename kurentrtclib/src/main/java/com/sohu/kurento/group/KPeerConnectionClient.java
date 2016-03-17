@@ -2,6 +2,8 @@ package com.sohu.kurento.group;
 
 import android.content.Context;
 import android.opengl.EGLContext;
+import android.os.Environment;
+import android.os.ParcelFileDescriptor;
 import android.util.Log;
 
 import com.sohu.kurento.util.LogCat;
@@ -19,16 +21,21 @@ import org.webrtc.PeerConnection;
 import org.webrtc.PeerConnectionFactory;
 import org.webrtc.SdpObserver;
 import org.webrtc.SessionDescription;
+import org.webrtc.StatsObserver;
 import org.webrtc.StatsReport;
 import org.webrtc.VideoCapturerAndroid;
 import org.webrtc.VideoRenderer;
 import org.webrtc.VideoSource;
 import org.webrtc.VideoTrack;
+import org.webrtc.voiceengine.WebRtcAudioManager;
 
+import java.io.File;
+import java.io.IOException;
 import java.util.EnumSet;
 import java.util.LinkedList;
 import java.util.List;
 import java.util.Timer;
+import java.util.TimerTask;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -41,6 +48,8 @@ public class KPeerConnectionClient {
     public static final String VIDEO_TRACK_ID = "ARDAMSv0";
     public static final String AUDIO_TRACK_ID = "ARDAMSa0";
     private static final String TAG = "PC_client";
+    private static final String FIELD_TRIAL_AUTOMATIC_RESIZE =
+            "WebRTC-MediaCodecVideoEncoder-AutomaticResize/Enabled/";
     private static final String FIELD_TRIAL_VP9 = "WebRTC-SupportVP9/Enabled/";
     public static final String VIDEO_CODEC_VP8 = "VP8";
     public static final String VIDEO_CODEC_VP9 = "VP9";
@@ -78,7 +87,7 @@ public class KPeerConnectionClient {
     private VideoSource videoSource;
     private boolean videoCallEnabled;
     private boolean preferIsac;
-    private boolean preferH264;
+    private String preferredVideoCodec;
     private boolean videoSourceStopped;
     private boolean isError;
     private Timer statsTimer;
@@ -87,6 +96,7 @@ public class KPeerConnectionClient {
     private MediaConstraints videoConstraints;
     private MediaConstraints audioConstraints;
     private MediaConstraints sdpMediaConstraints;
+    private ParcelFileDescriptor aecDumpFileDescriptor;
     private PeerConnectionParameters peerConnectionParameters;
     // Queued remote ICE candidates are consumed only after both local and
     // remote descriptions are set. Similarly local ICE candidates are sent to
@@ -143,10 +153,14 @@ public class KPeerConnectionClient {
         public final int videoStartBitrate;
         public final String videoCodec;
         public final boolean videoCodecHwAcceleration;
+        public final boolean captureToTexture;
         public final int audioStartBitrate;
         public final String audioCodec;
+        public final boolean tracing;
         public final boolean noAudioProcessing;
         public final boolean cpuOveruseDetection;
+        public final boolean aecDump;
+        public final boolean useOpenSLES;
 
         public PeerConnectionParameters(
                 boolean videoCallEnabled, boolean loopback,
@@ -161,11 +175,15 @@ public class KPeerConnectionClient {
             this.videoFps = videoFps;
             this.videoStartBitrate = videoStartBitrate;
             this.videoCodec = videoCodec;
+            this.tracing = true;
             this.videoCodecHwAcceleration = videoCodecHwAcceleration;
+            this.captureToTexture = true;
             this.audioStartBitrate = audioStartBitrate;
             this.audioCodec = audioCodec;
             this.noAudioProcessing = noAudioProcessing;
             this.cpuOveruseDetection = cpuOveruseDetection;
+            this.aecDump = true;
+            this.useOpenSLES = true;
         }
     }
 
@@ -181,7 +199,6 @@ public class KPeerConnectionClient {
         factory = null;
         peerConnection = null;
         preferIsac = false;
-        preferH264 = false;
         videoSourceStopped = false;
         isError = false;
         queuedRemoteCandidates = null;
@@ -218,28 +235,46 @@ public class KPeerConnectionClient {
     }
 
     private void createPeerConnectionFactoryInternal(Context context) {
+        PeerConnectionFactory.initializeInternalTracer();
+        if (peerConnectionParameters.tracing) {
+            PeerConnectionFactory.startInternalTracingCapture(
+                    Environment.getExternalStorageDirectory().getAbsolutePath() + File.separator
+                            + "webrtc-trace.txt");
+        }
         LogCat.debug(TAG + " Create peer connection factory. Use video: " +
                 peerConnectionParameters.videoCallEnabled);
         isError = false;
-        // Check if VP9 is used by default.
-        if (videoCallEnabled && peerConnectionParameters.videoCodec != null
-                && peerConnectionParameters.videoCodec.equals(VIDEO_CODEC_VP9)) {
-            PeerConnectionFactory.initializeFieldTrials(FIELD_TRIAL_VP9);
-        } else {
-            PeerConnectionFactory.initializeFieldTrials(null);
+
+        PeerConnectionFactory.initializeFieldTrials(FIELD_TRIAL_AUTOMATIC_RESIZE);
+
+            // Check preferred video codec.
+        preferredVideoCodec = VIDEO_CODEC_VP8;
+        if (videoCallEnabled && peerConnectionParameters.videoCodec != null) {
+            if (peerConnectionParameters.videoCodec.equals(VIDEO_CODEC_VP9)) {
+                preferredVideoCodec = VIDEO_CODEC_VP9;
+            } else if (peerConnectionParameters.videoCodec.equals(VIDEO_CODEC_H264)) {
+                preferredVideoCodec = VIDEO_CODEC_H264;
+            }
         }
-        // Check if H.264 is used by default.
-        preferH264 = false;
-        if (videoCallEnabled && peerConnectionParameters.videoCodec != null
-                && peerConnectionParameters.videoCodec.equals(VIDEO_CODEC_H264)) {
-            preferH264 = true;
-        }
-        // Check if ISAC is used by default.
+        Log.d(TAG, "Pereferred video codec: " + preferredVideoCodec);
+
+
+            // Check if ISAC is used by default.
         preferIsac = false;
         if (peerConnectionParameters.audioCodec != null
                 && peerConnectionParameters.audioCodec.equals(AUDIO_CODEC_ISAC)) {
             preferIsac = true;
         }
+
+        // Enable/disable OpenSL ES playback.
+        if (!peerConnectionParameters.useOpenSLES) {
+            Log.d(TAG, "Disable OpenSL ES audio even if device supports it");
+            WebRtcAudioManager.setBlacklistDeviceForOpenSLESUsage(true /* enable */);
+        } else {
+            Log.d(TAG, "Allow OpenSL ES audio if device supports it");
+            WebRtcAudioManager.setBlacklistDeviceForOpenSLESUsage(false);
+        }
+
         if (!PeerConnectionFactory.initializeAndroidGlobals(context, true, true,
                 peerConnectionParameters.videoCodecHwAcceleration)) {
             events.onPeerConnectionError("Failed to initializeAndroidGlobals");
@@ -273,13 +308,13 @@ public class KPeerConnectionClient {
         if (peerConnectionParameters.noAudioProcessing) {
             LogCat.debug("Disabling audio processing");
             audioConstraints.mandatory.add(new MediaConstraints.KeyValuePair(
-                    AUDIO_ECHO_CANCELLATION_CONSTRAINT, "true"));
+                    AUDIO_ECHO_CANCELLATION_CONSTRAINT, "false"));
             audioConstraints.mandatory.add(new MediaConstraints.KeyValuePair(
-                    AUDIO_AUTO_GAIN_CONTROL_CONSTRAINT, "true"));
+                    AUDIO_AUTO_GAIN_CONTROL_CONSTRAINT, "false"));
             audioConstraints.mandatory.add(new MediaConstraints.KeyValuePair(
-                    AUDIO_HIGH_PASS_FILTER_CONSTRAINT, "true"));
+                    AUDIO_HIGH_PASS_FILTER_CONSTRAINT, "false"));
             audioConstraints.mandatory.add(new MediaConstraints.KeyValuePair(
-                    AUDIO_NOISE_SUPPRESSION_CONSTRAINT, "true"));
+                    AUDIO_NOISE_SUPPRESSION_CONSTRAINT, "false"));
         }
 
         if (connectionType != ConnectionType.READ_ONLY) {
@@ -307,7 +342,6 @@ public class KPeerConnectionClient {
     }
 
     private void createPeerConnectionInternal(EglBase.Context renderEGLContext) {
-
         LogCat.debug(TAG + " createPeerConnectionInternal");
         if (factory == null || isError) {
             Log.e(TAG, "Peerconnection factory is not created");
@@ -346,7 +380,20 @@ public class KPeerConnectionClient {
                 EnumSet.of(Logging.TraceLevel.TRACE_INFO),
                 Logging.Severity.LS_ERROR);
         if (connectionType != ConnectionType.READ_ONLY)
-            createLocalMediaStream();
+            createLocalMediaStream(renderEGLContext);
+
+        if (peerConnectionParameters.aecDump) {
+            try {
+                aecDumpFileDescriptor = ParcelFileDescriptor.open(
+                        new File("/sdcard/Download/audio.aecdump"),
+                        ParcelFileDescriptor.MODE_READ_WRITE |
+                                ParcelFileDescriptor.MODE_CREATE |
+                                ParcelFileDescriptor.MODE_TRUNCATE);
+                factory.startAecDump(aecDumpFileDescriptor.getFd(), 10000);
+            } catch(IOException e) {
+                Log.e(TAG, "Can not open aecdump file", e);
+            }
+        }
 
         LogCat.debug("Peer connection created.");
 
@@ -355,7 +402,7 @@ public class KPeerConnectionClient {
     /**
      * 创建local stream
      */
-    private void createLocalMediaStream() {
+    private void createLocalMediaStream(EglBase.Context renderEGLConext) {
 
         LogCat.debug(TAG + " createLocalMediaStream");
         mediaStream = factory.createLocalMediaStream("ARDAMS");
@@ -367,7 +414,8 @@ public class KPeerConnectionClient {
                 cameraDeviceName = frontCameraDeviceName;
             }
             LogCat.debug("Opening camera: " + cameraDeviceName);
-            videoCapturer = VideoCapturerAndroid.create(cameraDeviceName, null);
+            videoCapturer = VideoCapturerAndroid.create(cameraDeviceName, null,
+                    peerConnectionParameters.captureToTexture? renderEGLConext: null);
             if (videoCapturer == null) {
                 reportError("Failed to open camera");
                 return;
@@ -727,8 +775,8 @@ public class KPeerConnectionClient {
                 if (preferIsac) {
                     sdpDescription = preferCodec(sdpDescription, AUDIO_CODEC_ISAC, true);
                 }
-                if (videoCallEnabled && preferH264) {
-                    sdpDescription = preferCodec(sdpDescription, VIDEO_CODEC_H264, false);
+                if (videoCallEnabled) {
+                    sdpDescription = preferCodec(sdpDescription, preferredVideoCodec, false);
                 }
                 if (videoCallEnabled && peerConnectionParameters.videoStartBitrate > 0) {
                     sdpDescription = setStartBitrate(VIDEO_CODEC_VP8, true,
@@ -777,6 +825,19 @@ public class KPeerConnectionClient {
                     LogCat.debug("PC Create OFFER");
                     isInitiator = true;
                     peerConnection.createOffer(sdpObserver, sdpMediaConstraints);
+                }
+            }
+        });
+    }
+
+    public void createAnswer() {
+        executor.execute(new Runnable() {
+            @Override
+            public void run() {
+                if (peerConnection != null && !isError) {
+                    Log.d(TAG, "PC create ANSWER");
+                    isInitiator = false;
+                    peerConnection.createAnswer(sdpObserver, sdpMediaConstraints);
                 }
             }
         });
@@ -850,8 +911,8 @@ public class KPeerConnectionClient {
             if (preferIsac) {
                 sdpDescription = preferCodec(sdpDescription, AUDIO_CODEC_ISAC, true);
             }
-            if (videoCallEnabled && preferH264) {
-                sdpDescription = preferCodec(sdpDescription, VIDEO_CODEC_H264, false);
+            if (videoCallEnabled) {
+                sdpDescription = preferCodec(sdpDescription, preferredVideoCodec, false);
             }
             final SessionDescription sdp = new SessionDescription(
                     origSdp.type, sdpDescription);
@@ -1092,5 +1153,75 @@ public class KPeerConnectionClient {
 
         LogCat.debug("Closing peer connection done.");
         events.onPeerConnectionClosed();
+        PeerConnectionFactory.stopInternalTracingCapture();
+        PeerConnectionFactory.shutdownInternalTracer();
     }
+
+
+    public boolean isHDVideo() {
+        if (!videoCallEnabled) {
+            return false;
+        }
+        int minWidth = 0;
+        int minHeight = 0;
+        for (MediaConstraints.KeyValuePair keyValuePair : videoConstraints.mandatory) {
+            if (keyValuePair.getKey().equals("minWidth")) {
+                try {
+                    minWidth = Integer.parseInt(keyValuePair.getValue());
+                } catch (NumberFormatException e) {
+                    Log.e(TAG, "Can not parse video width from video constraints");
+                }
+            } else if (keyValuePair.getKey().equals("minHeight")) {
+                try {
+                    minHeight = Integer.parseInt(keyValuePair.getValue());
+                } catch (NumberFormatException e) {
+                    Log.e(TAG, "Can not parse video height from video constraints");
+                }
+            }
+        }
+        if (minWidth * minHeight >= 1280 * 720) {
+            return true;
+        } else {
+            return false;
+        }
+    }
+
+    private void getStats() {
+        if (peerConnection == null || isError) {
+            return;
+        }
+        boolean success = peerConnection.getStats(new StatsObserver() {
+            @Override
+            public void onComplete(final StatsReport[] reports) {
+                events.onPeerConnectionStatsReady(reports);
+            }
+        }, null);
+        if (!success) {
+            Log.e(TAG, "getStats() returns false!");
+        }
+    }
+
+    public void enableStatsEvents(boolean enable, int periodMs) {
+        if (enable) {
+            try {
+                statsTimer.schedule(new TimerTask() {
+                    @Override
+                    public void run() {
+                        executor.execute(new Runnable() {
+                            @Override
+                            public void run() {
+                                getStats();
+                            }
+                        });
+                    }
+                }, 0, periodMs);
+            } catch (Exception e) {
+                Log.e(TAG, "Can not schedule statistics timer", e);
+            }
+        } else {
+            statsTimer.cancel();
+        }
+    }
+
+
 }
