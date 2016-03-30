@@ -1,28 +1,11 @@
 /*
- * libjingle
- * Copyright 2015 Google Inc.
+ *  Copyright 2015 The WebRTC project authors. All Rights Reserved.
  *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
- *
- *  1. Redistributions of source code must retain the above copyright notice,
- *     this list of conditions and the following disclaimer.
- *  2. Redistributions in binary form must reproduce the above copyright notice,
- *     this list of conditions and the following disclaimer in the documentation
- *     and/or other materials provided with the distribution.
- *  3. The name of the author may not be used to endorse or promote products
- *     derived from this software without specific prior written permission.
- *
- * THIS SOFTWARE IS PROVIDED BY THE AUTHOR ``AS IS'' AND ANY EXPRESS OR IMPLIED
- * WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF
- * MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO
- * EVENT SHALL THE AUTHOR BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
- * SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
- * PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS;
- * OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY,
- * WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR
- * OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF
- * ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ *  Use of this source code is governed by a BSD-style license
+ *  that can be found in the LICENSE file in the root of the source
+ *  tree. An additional intellectual property rights grant can be found
+ *  in the file PATENTS.  All contributing project authors may
+ *  be found in the AUTHORS file in the root of the source tree.
  */
 
 package org.webrtc;
@@ -36,6 +19,7 @@ import org.webrtc.Logging;
 import android.content.Context;
 
 import java.util.ArrayList;
+import java.util.List;
 
 /**
  * Borrowed from Chromium's src/net/android/java/src/org/chromium/net/NetworkChangeNotifier.java
@@ -154,19 +138,27 @@ public class NetworkMonitor {
     if (autoDetector == null) {
       autoDetector = new NetworkMonitorAutoDetect(
         new NetworkMonitorAutoDetect.Observer() {
+
           @Override
           public void onConnectionTypeChanged(ConnectionType newConnectionType) {
             updateCurrentConnectionType(newConnectionType);
           }
+
           @Override
           public void onNetworkConnect(NetworkInformation networkInfo) {
-            updateNetworkInformation(networkInfo);
+            notifyObserversOfNetworkConnect(networkInfo);
+          }
+
+          @Override
+          public void onNetworkDisconnect(int networkHandle) {
+            notifyObserversOfNetworkDisconnect(networkHandle);
           }
         },
         applicationContext);
       final NetworkMonitorAutoDetect.NetworkState networkState =
           autoDetector.getCurrentNetworkState();
-      updateCurrentConnectionType(autoDetector.getConnectionType(networkState));
+      updateCurrentConnectionType(NetworkMonitorAutoDetect.getConnectionType(networkState));
+      updateActiveNetworkList();
     }
   }
 
@@ -187,9 +179,28 @@ public class NetworkMonitor {
     }
   }
 
-  private void updateNetworkInformation(NetworkInformation networkInfo) {
+  private void notifyObserversOfNetworkConnect(NetworkInformation networkInfo) {
     for (long nativeObserver : nativeNetworkObservers) {
       nativeNotifyOfNetworkConnect(nativeObserver, networkInfo);
+    }
+  }
+
+  private void notifyObserversOfNetworkDisconnect(int networkHandle) {
+    for (long nativeObserver : nativeNetworkObservers) {
+      nativeNotifyOfNetworkDisconnect(nativeObserver, networkHandle);
+    }
+  }
+
+  private void updateActiveNetworkList() {
+    List<NetworkInformation> networkInfoList = autoDetector.getActiveNetworkList();
+    if (networkInfoList == null || networkInfoList.size() == 0) {
+      return;
+    }
+
+    NetworkInformation[] networkInfos = new NetworkInformation[networkInfoList.size()];
+    networkInfos = networkInfoList.toArray(networkInfos);
+    for (long nativeObserver : nativeNetworkObservers) {
+      nativeNotifyOfActiveNetworkList(nativeObserver, networkInfos);
     }
   }
 
@@ -224,11 +235,11 @@ public class NetworkMonitor {
         && connectionType != ConnectionType.CONNECTION_NONE;
   }
 
-  private native long nativeCreateNetworkMonitor();
-
   private native void nativeNotifyConnectionTypeChanged(long nativePtr);
-
   private native void nativeNotifyOfNetworkConnect(long nativePtr, NetworkInformation networkInfo);
+  private native void nativeNotifyOfNetworkDisconnect(long nativePtr, int networkHandle);
+  private native void nativeNotifyOfActiveNetworkList(long nativePtr,
+                                                      NetworkInformation[] networkInfos);
 
   // For testing only.
   static void resetInstanceForTests(Context context) {

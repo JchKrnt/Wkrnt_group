@@ -1,28 +1,11 @@
 /*
- * libjingle
- * Copyright 2013 Google Inc.
+ *  Copyright 2013 The WebRTC project authors. All Rights Reserved.
  *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
- *
- *  1. Redistributions of source code must retain the above copyright notice,
- *     this list of conditions and the following disclaimer.
- *  2. Redistributions in binary form must reproduce the above copyright notice,
- *     this list of conditions and the following disclaimer in the documentation
- *     and/or other materials provided with the distribution.
- *  3. The name of the author may not be used to endorse or promote products
- *     derived from this software without specific prior written permission.
- *
- * THIS SOFTWARE IS PROVIDED BY THE AUTHOR ``AS IS'' AND ANY EXPRESS OR IMPLIED
- * WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF
- * MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO
- * EVENT SHALL THE AUTHOR BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
- * SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
- * PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS;
- * OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY,
- * WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR
- * OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF
- * ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ *  Use of this source code is governed by a BSD-style license
+ *  that can be found in the LICENSE file in the root of the source
+ *  tree. An additional intellectual property rights grant can be found
+ *  in the file PATENTS.  All contributing project authors may
+ *  be found in the AUTHORS file in the root of the source tree.
  */
 
 package org.webrtc;
@@ -144,27 +127,14 @@ public class VideoRenderer {
      }
    }
 
-  // |this| either wraps a native (GUI) renderer or a client-supplied Callbacks
-  // (Java) implementation; this is indicated by |isWrappedVideoRenderer|.
   long nativeVideoRenderer;
-  private final boolean isWrappedVideoRenderer;
-
-  public static VideoRenderer createGui(int x, int y) {
-    long nativeVideoRenderer = nativeCreateGuiVideoRenderer(x, y);
-    if (nativeVideoRenderer == 0) {
-      return null;
-    }
-    return new VideoRenderer(nativeVideoRenderer);
-  }
 
   public VideoRenderer(Callbacks callbacks) {
     nativeVideoRenderer = nativeWrapVideoRenderer(callbacks);
-    isWrappedVideoRenderer = true;
   }
 
   private VideoRenderer(long nativeVideoRenderer) {
     this.nativeVideoRenderer = nativeVideoRenderer;
-    isWrappedVideoRenderer = false;
   }
 
   public void dispose() {
@@ -172,19 +142,12 @@ public class VideoRenderer {
       // Already disposed.
       return;
     }
-    if (!isWrappedVideoRenderer) {
-      freeGuiVideoRenderer(nativeVideoRenderer);
-    } else {
-      freeWrappedVideoRenderer(nativeVideoRenderer);
-    }
+
+    freeWrappedVideoRenderer(nativeVideoRenderer);
     nativeVideoRenderer = 0;
   }
 
-  private static native long nativeCreateGuiVideoRenderer(int x, int y);
   private static native long nativeWrapVideoRenderer(Callbacks callbacks);
-
-  private static native void freeGuiVideoRenderer(long nativeVideoRenderer);
   private static native void freeWrappedVideoRenderer(long nativeVideoRenderer);
-
   private static native void releaseNativeFrame(long nativeFramePointer);
 }
