@@ -19,6 +19,7 @@ import com.sohu.kurento.util.LooperExecutor;
 
 import org.webrtc.CameraEnumerationAndroid;
 import org.webrtc.DataChannel;
+import org.webrtc.EglBase;
 import org.webrtc.IceCandidate;
 import org.webrtc.Logging;
 import org.webrtc.MediaCodecVideoEncoder;
@@ -247,7 +248,7 @@ public class PeerConnectionClient {
         });
     }
 
-    public void createPeerConnection(final EGLContext renderEGLContext, final VideoRenderer
+    public void createPeerConnection(final EglBase.Context renderEGLContext, final VideoRenderer
             .Callbacks localRender, final VideoRenderer.Callbacks remoteRender,
                                      final List<PeerConnection.IceServer> iceServers) {
         this.localRender = localRender;
@@ -263,7 +264,7 @@ public class PeerConnectionClient {
     }
 
     public void createPeerConnection(
-            final EGLContext renderEGLContext,
+            final EglBase.Context renderEGLContext,
             final VideoRenderer.Callbacks localRender,
             final VideoRenderer.Callbacks remoteRender
     ) {
@@ -322,11 +323,13 @@ public class PeerConnectionClient {
                 peerConnectionParameters.videoCodecHwAcceleration)) {
             events.onPeerConnectionError("Failed to initializeAndroidGlobals");
         }
-        factory = new PeerConnectionFactory();
+
         if (options != null) {
             Log.d(TAG, "Factory networkIgnoreMask option: " + options.networkIgnoreMask);
-            factory.setOptions(options);
+//            factory.setOptions(options);
         }
+
+        factory = new PeerConnectionFactory(options);
         Log.d(TAG, "Peer connection factory created.");
     }
 
@@ -415,7 +418,7 @@ public class PeerConnectionClient {
         }
     }
 
-    private void createPeerConnectionInternal(EGLContext renderEGLContext) {
+    private void createPeerConnectionInternal(EglBase.Context renderEGLContext) {
         if (factory == null || isError) {
             Log.e(TAG, "Peerconnection factory is not created");
             return;
@@ -430,7 +433,7 @@ public class PeerConnectionClient {
 
         if (videoCallEnabled) {
             Log.d(TAG, "EGLContext: " + renderEGLContext);
-            factory.setVideoHwAccelerationOptions(renderEGLContext);
+            factory.setVideoHwAccelerationOptions(renderEGLContext, renderEGLContext);
         }
 
         PeerConnection.RTCConfiguration rtcConfig =
