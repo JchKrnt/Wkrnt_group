@@ -296,6 +296,7 @@ public class KWWebSocketClient implements WebSocketChannel.WebSocketEvents, KWWe
                 jsonObject.addProperty("roomName", roomName);
                 jsonObject.addProperty("id", "onIceCandidate");
                 jsonObject.add("candidate", gson.toJsonTree(new com.sohu.kurento.bean.IceCandidate(candidate.sdp, candidate.sdpMid, candidate.sdpMLineIndex)));
+                LogCat.v("local candidate : " + candidate.sdp);
                 webSocketChannel.sendMsg(jsonObject.toString());
             }
         });

@@ -1,11 +1,28 @@
 /*
- *  Copyright 2015 The WebRTC project authors. All Rights Reserved.
+ * libjingle
+ * Copyright 2015 Google Inc.
  *
- *  Use of this source code is governed by a BSD-style license
- *  that can be found in the LICENSE file in the root of the source
- *  tree. An additional intellectual property rights grant can be found
- *  in the file PATENTS.  All contributing project authors may
- *  be found in the AUTHORS file in the root of the source tree.
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions are met:
+ *
+ *  1. Redistributions of source code must retain the above copyright notice,
+ *     this list of conditions and the following disclaimer.
+ *  2. Redistributions in binary form must reproduce the above copyright notice,
+ *     this list of conditions and the following disclaimer in the documentation
+ *     and/or other materials provided with the distribution.
+ *  3. The name of the author may not be used to endorse or promote products
+ *     derived from this software without specific prior written permission.
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE AUTHOR ``AS IS'' AND ANY EXPRESS OR IMPLIED
+ * WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF
+ * MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO
+ * EVENT SHALL THE AUTHOR BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
+ * SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
+ * PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS;
+ * OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY,
+ * WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR
+ * OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF
+ * ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
 package org.webrtc;
@@ -17,6 +34,7 @@ import android.os.SystemClock;
 import android.view.Surface;
 import android.view.WindowManager;
 
+import org.json.JSONException;
 import org.webrtc.CameraEnumerationAndroid.CaptureFormat;
 import org.webrtc.Logging;
 
@@ -44,8 +62,7 @@ import java.util.concurrent.TimeUnit;
 // camera thread. The internal *OnCameraThread() methods must check |camera| for null to check if
 // the camera has been stopped.
 @SuppressWarnings("deprecation")
-public class VideoCapturerAndroid implements
-    VideoCapturer,
+public class VideoCapturerAndroid extends VideoCapturer implements
     android.hardware.Camera.PreviewCallback,
     SurfaceTextureHelper.OnTextureFrameAvailableListener {
   private final static String TAG = "VideoCapturerAndroid";
@@ -196,7 +213,12 @@ public class VideoCapturerAndroid implements
     if (cameraId == -1) {
       return null;
     }
-    return new VideoCapturerAndroid(cameraId, eventsHandler, sharedEglContext);
+
+    final VideoCapturerAndroid capturer = new VideoCapturerAndroid(cameraId, eventsHandler,
+        sharedEglContext);
+    capturer.setNativeCapturer(
+        nativeCreateVideoCapturer(capturer, capturer.surfaceHelper));
+    return capturer;
   }
 
   public void printStackTrace() {
@@ -283,7 +305,6 @@ public class VideoCapturerAndroid implements
     }
   }
 
-  @Override
   public List<CaptureFormat> getSupportedFormats() {
     return CameraEnumerationAndroid.getSupportedFormats(getCurrentCameraId());
   }
@@ -293,9 +314,14 @@ public class VideoCapturerAndroid implements
     return isCapturingToTexture;
   }
 
-  @Override
-  public SurfaceTextureHelper getSurfaceTextureHelper() {
-    return surfaceHelper;
+  // Called from native code.
+  private String getSupportedFormatsAsJson() throws JSONException {
+    return CameraEnumerationAndroid.getSupportedFormatsAsJson(getCurrentCameraId());
+  }
+
+  // Called from native VideoCapturer_nativeCreateVideoCapturer.
+  private VideoCapturerAndroid(int cameraId) {
+    this(cameraId, null, null);
   }
 
   private VideoCapturerAndroid(int cameraId, CameraEventsHandler eventsHandler,
@@ -338,12 +364,11 @@ public class VideoCapturerAndroid implements
     return -1;
   }
 
-  // Quits the camera thread. This needs to be done manually, otherwise the thread and handler will
-  // not be garbage collected.
-  @Override
-  public void dispose() {
+  // Called by native code to quit the camera thread. This needs to be done manually, otherwise the
+  // thread and handler will not be garbage collected.
+  private void release() {
     Logging.d(TAG, "release");
-    if (isDisposed()) {
+    if (isReleased()) {
       throw new IllegalStateException("Already released");
     }
     ThreadUtils.invokeUninterruptibly(cameraThreadHandler, new Runnable() {
@@ -359,14 +384,15 @@ public class VideoCapturerAndroid implements
   }
 
   // Used for testing purposes to check if release() has been called.
-  public boolean isDisposed() {
+  public boolean isReleased() {
     return (cameraThread == null);
   }
 
+  // Called by native code.
+  //
   // Note that this actually opens the camera, and Camera callbacks run on the
   // thread that calls open(), so this is done on the CameraThread.
-  @Override
-  public void startCapture(
+  void startCapture(
       final int width, final int height, final int framerate,
       final Context applicationContext, final CapturerObserver frameObserver) {
     Logging.d(TAG, "startCapture requested: " + width + "x" + height
@@ -539,9 +565,8 @@ public class VideoCapturerAndroid implements
     camera.startPreview();
   }
 
-  // Blocks until camera is known to be stopped.
-  @Override
-  public void stopCapture() throws InterruptedException {
+  // Called by native code.  Returns true when camera is known to be stopped.
+  void stopCapture() throws InterruptedException {
     Logging.d(TAG, "stopCapture");
     final CountDownLatch barrier = new CountDownLatch(1);
     cameraThreadHandler.post(new Runnable() {
@@ -678,13 +703,9 @@ public class VideoCapturerAndroid implements
       return;
     }
     if (dropNextFrame)  {
-      surfaceHelper.returnTextureFrame();
-      dropNextFrame = false;
-      return;
-    }
-    if (eventsHandler != null && !firstFrameReported) {
-      eventsHandler.onFirstFrameAvailable();
-      firstFrameReported = true;
+     surfaceHelper.returnTextureFrame();
+     dropNextFrame = false;
+     return;
     }
 
     int rotation = getFrameOrientation();
@@ -698,4 +719,75 @@ public class VideoCapturerAndroid implements
     frameObserver.onTextureFrameCaptured(captureFormat.width, captureFormat.height, oesTextureId,
         transformMatrix, rotation, timestampNs);
   }
+
+  // Interface used for providing callbacks to an observer.
+  interface CapturerObserver {
+    // Notify if the camera have been started successfully or not.
+    // Called on a Java thread owned by VideoCapturerAndroid.
+    abstract void onCapturerStarted(boolean success);
+
+    // Delivers a captured frame. Called on a Java thread owned by
+    // VideoCapturerAndroid.
+    abstract void onByteBufferFrameCaptured(byte[] data, int width, int height, int rotation,
+                                            long timeStamp);
+
+    // Delivers a captured frame in a texture with id |oesTextureId|. Called on a Java thread
+    // owned by VideoCapturerAndroid.
+    abstract void onTextureFrameCaptured(
+            int width, int height, int oesTextureId, float[] transformMatrix, int rotation,
+            long timestamp);
+
+    // Requests an output format from the video capturer. Captured frames
+    // by the camera will be scaled/or dropped by the video capturer.
+    // Called on a Java thread owned by VideoCapturerAndroid.
+    abstract void onOutputFormatRequest(int width, int height, int framerate);
+  }
+
+  // An implementation of CapturerObserver that forwards all calls from
+  // Java to the C layer.
+  static class NativeObserver implements CapturerObserver {
+    private final long nativeCapturer;
+
+    public NativeObserver(long nativeCapturer) {
+      this.nativeCapturer = nativeCapturer;
+    }
+
+    @Override
+    public void onCapturerStarted(boolean success) {
+      nativeCapturerStarted(nativeCapturer, success);
+    }
+
+    @Override
+    public void onByteBufferFrameCaptured(byte[] data, int width, int height,
+        int rotation, long timeStamp) {
+      nativeOnByteBufferFrameCaptured(nativeCapturer, data, data.length, width, height, rotation,
+          timeStamp);
+    }
+
+    @Override
+    public void onTextureFrameCaptured(
+        int width, int height, int oesTextureId, float[] transformMatrix, int rotation,
+        long timestamp) {
+      nativeOnTextureFrameCaptured(nativeCapturer, width, height, oesTextureId, transformMatrix,
+          rotation, timestamp);
+    }
+
+    @Override
+    public void onOutputFormatRequest(int width, int height, int framerate) {
+      nativeOnOutputFormatRequest(nativeCapturer, width, height, framerate);
+    }
+
+    private native void nativeCapturerStarted(long nativeCapturer,
+        boolean success);
+    private native void nativeOnByteBufferFrameCaptured(long nativeCapturer,
+        byte[] data, int length, int width, int height, int rotation, long timeStamp);
+    private native void nativeOnTextureFrameCaptured(long nativeCapturer, int width, int height,
+        int oesTextureId, float[] transformMatrix, int rotation, long timestamp);
+    private native void nativeOnOutputFormatRequest(long nativeCapturer,
+        int width, int height, int framerate);
+  }
+
+  private static native long nativeCreateVideoCapturer(
+      VideoCapturerAndroid videoCapturer,
+      SurfaceTextureHelper surfaceHelper);
 }
