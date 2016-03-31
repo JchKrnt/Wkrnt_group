@@ -1,11 +1,28 @@
 /*
- *  Copyright 2015 The WebRTC project authors. All Rights Reserved.
+ * libjingle
+ * Copyright 2015 Google Inc.
  *
- *  Use of this source code is governed by a BSD-style license
- *  that can be found in the LICENSE file in the root of the source
- *  tree. An additional intellectual property rights grant can be found
- *  in the file PATENTS.  All contributing project authors may
- *  be found in the AUTHORS file in the root of the source tree.
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions are met:
+ *
+ *  1. Redistributions of source code must retain the above copyright notice,
+ *     this list of conditions and the following disclaimer.
+ *  2. Redistributions in binary form must reproduce the above copyright notice,
+ *     this list of conditions and the following disclaimer in the documentation
+ *     and/or other materials provided with the distribution.
+ *  3. The name of the author may not be used to endorse or promote products
+ *     derived from this software without specific prior written permission.
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE AUTHOR ``AS IS'' AND ANY EXPRESS OR IMPLIED
+ * WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF
+ * MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO
+ * EVENT SHALL THE AUTHOR BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
+ * SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
+ * PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS;
+ * OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY,
+ * WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR
+ * OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF
+ * ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
 package org.webrtc;
@@ -13,6 +30,10 @@ package org.webrtc;
 import static java.lang.Math.abs;
 import static java.lang.Math.ceil;
 import android.graphics.ImageFormat;
+
+import org.json.JSONArray;
+import org.json.JSONException;
+import org.json.JSONObject;
 
 import org.webrtc.Logging;
 
@@ -38,9 +59,7 @@ public class CameraEnumerationAndroid {
   }
 
   public static synchronized List<CaptureFormat> getSupportedFormats(int cameraId) {
-    final List<CaptureFormat> formats = enumerator.getSupportedFormats(cameraId);
-    Logging.d(TAG, "Supported formats for camera " + cameraId + ": " + formats);
-    return formats;
+    return enumerator.getSupportedFormats(cameraId);
   }
 
   public static class CaptureFormat {
@@ -48,8 +67,9 @@ public class CameraEnumerationAndroid {
     public final int height;
     public final int maxFramerate;
     public final int minFramerate;
-    // TODO(hbos): If VideoCapturer.startCapture is updated to support other image formats then this
-    // needs to be updated and VideoCapturer.getSupportedFormats need to return CaptureFormats of
+    // TODO(hbos): If VideoCapturerAndroid.startCapture is updated to support
+    // other image formats then this needs to be updated and
+    // VideoCapturerAndroid.getSupportedFormats need to return CaptureFormats of
     // all imageFormats.
     public final int imageFormat = ImageFormat.NV21;
 
@@ -133,6 +153,21 @@ public class CameraEnumerationAndroid {
   // camera can not be used or does not exist.
   public static String getNameOfBackFacingDevice() {
     return getNameOfDevice(android.hardware.Camera.CameraInfo.CAMERA_FACING_BACK);
+  }
+
+  public static String getSupportedFormatsAsJson(int id) throws JSONException {
+    List<CaptureFormat> formats = getSupportedFormats(id);
+    JSONArray json_formats = new JSONArray();
+    for (CaptureFormat format : formats) {
+      JSONObject json_format = new JSONObject();
+      json_format.put("width", format.width);
+      json_format.put("height", format.height);
+      json_format.put("framerate", (format.maxFramerate + 999) / 1000);
+      json_formats.put(json_format);
+    }
+    Logging.d(TAG, "Supported formats for camera " + id + ": "
+        +  json_formats.toString(2));
+    return json_formats.toString();
   }
 
   // Helper class for finding the closest supported format for the two functions below.

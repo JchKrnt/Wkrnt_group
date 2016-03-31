@@ -40,6 +40,7 @@ public final class WebRtcAudioUtils {
   // bad and where it makes sense to avoid using it and instead rely on the
   // native WebRTC version instead. The device name is given by Build.MODEL.
   private static final String[] BLACKLISTED_AEC_MODELS = new String[] {
+      "Nexus 5",
       "D6503",      // Sony Xperia Z2 D6503
       "ONE A2005",  // OnePlus 2
   };
@@ -50,6 +51,7 @@ public final class WebRtcAudioUtils {
   private static final String[] BLACKLISTED_NS_MODELS = new String[] {
       "Nexus 10",
       "Nexus 9",
+      "Nexus 5",
       "ONE A2005",  // OnePlus 2
   };
 

@@ -1,11 +1,28 @@
 /*
- *  Copyright 2013 The WebRTC project authors. All Rights Reserved.
+ * libjingle
+ * Copyright 2013 Google Inc.
  *
- *  Use of this source code is governed by a BSD-style license
- *  that can be found in the LICENSE file in the root of the source
- *  tree. An additional intellectual property rights grant can be found
- *  in the file PATENTS.  All contributing project authors may
- *  be found in the AUTHORS file in the root of the source tree.
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions are met:
+ *
+ *  1. Redistributions of source code must retain the above copyright notice,
+ *     this list of conditions and the following disclaimer.
+ *  2. Redistributions in binary form must reproduce the above copyright notice,
+ *     this list of conditions and the following disclaimer in the documentation
+ *     and/or other materials provided with the distribution.
+ *  3. The name of the author may not be used to endorse or promote products
+ *     derived from this software without specific prior written permission.
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE AUTHOR ``AS IS'' AND ANY EXPRESS OR IMPLIED
+ * WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF
+ * MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO
+ * EVENT SHALL THE AUTHOR BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
+ * SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
+ * PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS;
+ * OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY,
+ * WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR
+ * OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF
+ * ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
 
@@ -26,8 +43,6 @@ public class PeerConnectionFactory {
   private final long nativeFactory;
   private static Thread workerThread;
   private static Thread signalingThread;
-  private EglBase localEglbase;
-  private EglBase remoteEglbase;
 
   public static class Options {
     // Keep in sync with webrtc/base/network.h!
@@ -110,12 +125,10 @@ public class PeerConnectionFactory {
         nativeCreateLocalMediaStream(nativeFactory, label));
   }
 
-  // The VideoSource takes ownership of |capturer|, so capturer.release() should not be called
-  // manually after this.
   public VideoSource createVideoSource(
       VideoCapturer capturer, MediaConstraints constraints) {
     return new VideoSource(nativeCreateVideoSource(
-        nativeFactory, capturer, constraints));
+        nativeFactory, capturer.takeNativeVideoCapturer(), constraints));
   }
 
   public VideoTrack createVideoTrack(String id, VideoSource source) {
@@ -163,36 +176,28 @@ public class PeerConnectionFactory {
     nativeSetOptions(nativeFactory, options);
   }
 
+  @Deprecated
+  public void setVideoHwAccelerationOptions(Object renderEGLContext) {
+    nativeSetVideoHwAccelerationOptions(nativeFactory, renderEGLContext, renderEGLContext);
+  }
+
   /** Set the EGL context used by HW Video encoding and decoding.
    *
-   * @param localEglContext   Must be the same as used by VideoCapturerAndroid and any local video
-   *                          renderer.
-   * @param remoteEglContext  Must be the same as used by any remote video renderer.
+   *
+   * @param localEGLContext   An instance of javax.microedition.khronos.egl.EGLContext.
+   *                          Must be the same as used by VideoCapturerAndroid and any local
+   *                          video renderer.
+   * @param remoteEGLContext  An instance of javax.microedition.khronos.egl.EGLContext.
+   *                          Must be the same as used by any remote video renderer.
    */
-  public void setVideoHwAccelerationOptions(EglBase.Context localEglContext,
-      EglBase.Context remoteEglContext) {
-    if (localEglbase != null) {
-      Logging.w(TAG, "Egl context already set.");
-      localEglbase.release();
-    }
-    if (remoteEglbase != null) {
-      Logging.w(TAG, "Egl context already set.");
-      remoteEglbase.release();
-    }
-    localEglbase = EglBase.create(localEglContext);
-    remoteEglbase = EglBase.create(remoteEglContext);
-    nativeSetVideoHwAccelerationOptions(nativeFactory, localEglbase.getEglBaseContext(),
-        remoteEglbase.getEglBaseContext());
+  public void setVideoHwAccelerationOptions(Object localEGLContext, Object remoteEGLContext) {
+    nativeSetVideoHwAccelerationOptions(nativeFactory, localEGLContext, remoteEGLContext);
   }
 
   public void dispose() {
     nativeFreeFactory(nativeFactory);
     signalingThread = null;
     workerThread = null;
-    if (localEglbase != null)
-      localEglbase.release();
-    if (remoteEglbase != null)
-      remoteEglbase.release();
   }
 
   public void threadsCallbacks() {
@@ -239,7 +244,8 @@ public class PeerConnectionFactory {
       long nativeFactory, String label);
 
   private static native long nativeCreateVideoSource(
-      long nativeFactory, VideoCapturer videoCapturer, MediaConstraints constraints);
+      long nativeFactory, long nativeVideoCapturer,
+      MediaConstraints constraints);
 
   private static native long nativeCreateVideoTrack(
       long nativeFactory, String id, long nativeVideoSource);

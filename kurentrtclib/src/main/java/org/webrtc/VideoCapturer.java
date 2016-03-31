@@ -1,98 +1,70 @@
 /*
- *  Copyright 2013 The WebRTC project authors. All Rights Reserved.
+ * libjingle
+ * Copyright 2013 Google Inc.
  *
- *  Use of this source code is governed by a BSD-style license
- *  that can be found in the LICENSE file in the root of the source
- *  tree. An additional intellectual property rights grant can be found
- *  in the file PATENTS.  All contributing project authors may
- *  be found in the AUTHORS file in the root of the source tree.
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions are met:
+ *
+ *  1. Redistributions of source code must retain the above copyright notice,
+ *     this list of conditions and the following disclaimer.
+ *  2. Redistributions in binary form must reproduce the above copyright notice,
+ *     this list of conditions and the following disclaimer in the documentation
+ *     and/or other materials provided with the distribution.
+ *  3. The name of the author may not be used to endorse or promote products
+ *     derived from this software without specific prior written permission.
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE AUTHOR ``AS IS'' AND ANY EXPRESS OR IMPLIED
+ * WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF
+ * MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO
+ * EVENT SHALL THE AUTHOR BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
+ * SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
+ * PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS;
+ * OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY,
+ * WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR
+ * OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF
+ * ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
 package org.webrtc;
 
-import android.content.Context;
+/** Java version of cricket::VideoCapturer. */
+public class VideoCapturer {
+  private long nativeVideoCapturer;
 
-import java.util.List;
-
-// Base interface for all VideoCapturers to implement.
-// TODO(magjed): Simplify and improve this interface.
-public interface VideoCapturer {
-  // Interface used for providing callbacks to an observer.
-  public interface CapturerObserver {
-    // Notify if the camera have been started successfully or not.
-    // Called on a Java thread owned by VideoCapturer.
-    void onCapturerStarted(boolean success);
-
-    // Delivers a captured frame. Called on a Java thread owned by VideoCapturer.
-    void onByteBufferFrameCaptured(byte[] data, int width, int height, int rotation,
-                                   long timeStamp);
-
-    // Delivers a captured frame in a texture with id |oesTextureId|. Called on a Java thread
-    // owned by VideoCapturer.
-    void onTextureFrameCaptured(
-            int width, int height, int oesTextureId, float[] transformMatrix, int rotation,
-            long timestamp);
-
-    // Requests an output format from the video capturer. Captured frames
-    // by the camera will be scaled/or dropped by the video capturer.
-    // Called on a Java thread owned by VideoCapturer.
-    void onOutputFormatRequest(int width, int height, int framerate);
+  protected VideoCapturer() {
   }
 
-  // An implementation of CapturerObserver that forwards all calls from
-  // Java to the C layer.
-  static class NativeObserver implements CapturerObserver {
-    private final long nativeCapturer;
-
-    public NativeObserver(long nativeCapturer) {
-      this.nativeCapturer = nativeCapturer;
-    }
-
-    @Override
-    public void onCapturerStarted(boolean success) {
-      nativeCapturerStarted(nativeCapturer, success);
-    }
-
-    @Override
-    public void onByteBufferFrameCaptured(byte[] data, int width, int height,
-        int rotation, long timeStamp) {
-      nativeOnByteBufferFrameCaptured(nativeCapturer, data, data.length, width, height, rotation,
-          timeStamp);
-    }
-
-    @Override
-    public void onTextureFrameCaptured(
-        int width, int height, int oesTextureId, float[] transformMatrix, int rotation,
-        long timestamp) {
-      nativeOnTextureFrameCaptured(nativeCapturer, width, height, oesTextureId, transformMatrix,
-          rotation, timestamp);
-    }
-
-    @Override
-    public void onOutputFormatRequest(int width, int height, int framerate) {
-      nativeOnOutputFormatRequest(nativeCapturer, width, height, framerate);
-    }
-
-    private native void nativeCapturerStarted(long nativeCapturer,
-        boolean success);
-    private native void nativeOnByteBufferFrameCaptured(long nativeCapturer,
-        byte[] data, int length, int width, int height, int rotation, long timeStamp);
-    private native void nativeOnTextureFrameCaptured(long nativeCapturer, int width, int height,
-        int oesTextureId, float[] transformMatrix, int rotation, long timestamp);
-    private native void nativeOnOutputFormatRequest(long nativeCapturer,
-        int width, int height, int framerate);
+  public static VideoCapturer create(String deviceName) {
+    Object capturer = nativeCreateVideoCapturer(deviceName);
+    if (capturer != null)
+      return (VideoCapturer) (capturer);
+    return null;
   }
 
-  List<CameraEnumerationAndroid.CaptureFormat> getSupportedFormats();
+  // Sets |nativeCapturer| to be owned by VideoCapturer.
+  protected void setNativeCapturer(long nativeCapturer) {
+    this.nativeVideoCapturer = nativeCapturer;
+  }
 
-  SurfaceTextureHelper getSurfaceTextureHelper();
+  // Package-visible for PeerConnectionFactory.
+  long takeNativeVideoCapturer() {
+    if (nativeVideoCapturer == 0) {
+      throw new RuntimeException("Capturer can only be taken once!");
+    }
+    long ret = nativeVideoCapturer;
+    nativeVideoCapturer = 0;
+    return ret;
+  }
 
-  void startCapture(
-          final int width, final int height, final int framerate,
-          final Context applicationContext, final CapturerObserver frameObserver);
+  public void dispose() {
+    // No-op iff this capturer is owned by a source (see comment on
+    // PeerConnectionFactoryInterface::CreateVideoSource()).
+    if (nativeVideoCapturer != 0) {
+      free(nativeVideoCapturer);
+    }
+  }
 
-  // Blocks until capture is stopped.
-  void stopCapture() throws InterruptedException;
+  private static native Object nativeCreateVideoCapturer(String deviceName);
 
-  void dispose();
+  private static native void free(long nativeVideoCapturer);
 }

@@ -1,9 +1,12 @@
 package com.sohu.kurento.group;
 
 import android.content.Context;
+import android.content.pm.ApplicationInfo;
 import android.opengl.EGLContext;
 import android.os.Environment;
 import android.os.ParcelFileDescriptor;
+
+import android.text.format.DateFormat;
 import android.util.Log;
 
 import com.sohu.kurento.util.LogCat;
@@ -31,6 +34,8 @@ import org.webrtc.voiceengine.WebRtcAudioManager;
 
 import java.io.File;
 import java.io.IOException;
+import java.sql.Time;
+import java.util.Date;
 import java.util.EnumSet;
 import java.util.LinkedList;
 import java.util.List;
@@ -113,6 +118,7 @@ public class KPeerConnectionClient {
     private VideoTrack localVideoTrack;
     private VideoTrack remoteVideoTrack;
     private List<PeerConnection.IceServer> iceServers;
+    private Context context;
 
     private ConcurrentHashMap<VideoRenderer.Callbacks, VideoRenderer> localRenders = new ConcurrentHashMap();
 
@@ -194,6 +200,7 @@ public class KPeerConnectionClient {
             final KPeerConnectionEvents events) {
         this.peerConnectionParameters = peerConnectionParameters;
         this.events = events;
+        this.context = context;
         videoCallEnabled = peerConnectionParameters.videoCallEnabled;
         // Reset variables to initial states.
         factory = null;
@@ -235,17 +242,20 @@ public class KPeerConnectionClient {
     }
 
     private void createPeerConnectionFactoryInternal(Context context) {
-        PeerConnectionFactory.initializeInternalTracer();
-        if (peerConnectionParameters.tracing) {
-            PeerConnectionFactory.startInternalTracingCapture(
-                    Environment.getExternalStorageDirectory().getAbsolutePath() + File.separator
-                            + "webrtc-trace.txt");
-        }
+        LogCat.v("before init peerconnectionFactory internalTracer success.");
+//        PeerConnectionFactory.initializeInternalTracer();
+        LogCat.v("init peerconnectionFactory internalTracer success.");
+//        if (peerConnectionParameters.tracing) {
+//            PeerConnectionFactory.startInternalTracingCapture(
+//                    Environment.getExternalStorageDirectory().getAbsolutePath() + File.separator
+//                            + "webrtc-trace.txt");
+//        }
         LogCat.debug(TAG + " Create peer connection factory. Use video: " +
                 peerConnectionParameters.videoCallEnabled);
         isError = false;
 
         PeerConnectionFactory.initializeFieldTrials(FIELD_TRIAL_AUTOMATIC_RESIZE);
+        LogCat.v("init FieldTrials success");
 
             // Check preferred video codec.
         preferredVideoCodec = VIDEO_CODEC_VP8;
@@ -279,11 +289,8 @@ public class KPeerConnectionClient {
                 peerConnectionParameters.videoCodecHwAcceleration)) {
             events.onPeerConnectionError("Failed to initializeAndroidGlobals");
         }
-        factory = new PeerConnectionFactory();
-        if (options != null) {
+        factory = new PeerConnectionFactory(options);
             LogCat.debug("Factory networkIgnoreMask option: " + options.networkIgnoreMask);
-            factory.setOptions(options);
-        }
         LogCat.debug("Peer connection factory created.");
     }
 
@@ -308,20 +315,19 @@ public class KPeerConnectionClient {
         if (peerConnectionParameters.noAudioProcessing) {
             LogCat.debug("Disabling audio processing");
             audioConstraints.mandatory.add(new MediaConstraints.KeyValuePair(
-                    AUDIO_ECHO_CANCELLATION_CONSTRAINT, "false"));
+                    AUDIO_ECHO_CANCELLATION_CONSTRAINT, "true"));
             audioConstraints.mandatory.add(new MediaConstraints.KeyValuePair(
-                    AUDIO_AUTO_GAIN_CONTROL_CONSTRAINT, "false"));
+                    AUDIO_AUTO_GAIN_CONTROL_CONSTRAINT, "true"));
             audioConstraints.mandatory.add(new MediaConstraints.KeyValuePair(
-                    AUDIO_HIGH_PASS_FILTER_CONSTRAINT, "false"));
+                    AUDIO_HIGH_PASS_FILTER_CONSTRAINT, "true"));
             audioConstraints.mandatory.add(new MediaConstraints.KeyValuePair(
-                    AUDIO_NOISE_SUPPRESSION_CONSTRAINT, "false"));
+                    AUDIO_NOISE_SUPPRESSION_CONSTRAINT, "true"));
         }
 
         if (connectionType != ConnectionType.READ_ONLY) {
             createLocalMediaConstraintsInternal();
 
         }
-
 
         // Create SDP constraints.
         sdpMediaConstraints = new MediaConstraints();
@@ -377,15 +383,20 @@ public class KPeerConnectionClient {
         // NOTE: this _must_ happen while |factory| is alive!
         Logging.enableTracing(
                 "logcat:",
-                EnumSet.of(Logging.TraceLevel.TRACE_INFO),
-                Logging.Severity.LS_ERROR);
+                EnumSet.of(Logging.TraceLevel.TRACE_DEFAULT),
+                Logging.Severity.LS_INFO);
         if (connectionType != ConnectionType.READ_ONLY)
             createLocalMediaStream(renderEGLContext);
 
         if (peerConnectionParameters.aecDump) {
             try {
+                java.text.DateFormat format = DateFormat.getLongDateFormat(context);
+                String timeStr = format.format(new Date());
+                String audioName = timeStr+"audio.aecdump";
+                audioName = "/sdcard/Download/" + audioName;
+
                 aecDumpFileDescriptor = ParcelFileDescriptor.open(
-                        new File("/sdcard/Download/audio.aecdump"),
+                        new File(audioName),
                         ParcelFileDescriptor.MODE_READ_WRITE |
                                 ParcelFileDescriptor.MODE_CREATE |
                                 ParcelFileDescriptor.MODE_TRUNCATE);
@@ -554,6 +565,8 @@ public class KPeerConnectionClient {
                         MAX_VIDEO_FPS_CONSTRAINT, Integer.toString(videoFps)));
             }
         }
+
+
 
     }
 
@@ -1025,6 +1038,8 @@ public class KPeerConnectionClient {
                         events.onIceDisconnected();
                     } else if (newState == PeerConnection.IceConnectionState.FAILED) {
                         reportError("ICE connection failed.");
+                    }else if (newState == PeerConnection.IceConnectionState.DISCONNECTED){
+                        events.onIceDisconnected();
                     }
                 }
             });
@@ -1116,13 +1131,11 @@ public class KPeerConnectionClient {
 
 
     private void closeInternal() {
-
-        LogCat.debug("Closing peer connection.");
-        statsTimer.cancel();
-        if (peerConnection != null) {
-            peerConnection.dispose();
-            peerConnection = null;
+        if (factory != null && peerConnectionParameters.aecDump){
+            factory.stopAecDump();
         }
+
+        statsTimer.cancel();
 
         LogCat.debug("Closing video Track.");
         if (localVideoTrack != null) {
@@ -1135,11 +1148,18 @@ public class KPeerConnectionClient {
             localVideoTrack = null;
         }
 
+        LogCat.debug("Closing peer connection.");
+
+        if (peerConnection != null) {
+            peerConnection.dispose();
+            peerConnection = null;
+        }
+
+
         LogCat.debug("before video dispose...");
         if (videoSource != null) {
             LogCat.debug("video source state " + videoSource.state());
             videoSource.dispose();
-            LogCat.debug("video source state " + videoSource.state());
             videoSource = null;
         }
 
