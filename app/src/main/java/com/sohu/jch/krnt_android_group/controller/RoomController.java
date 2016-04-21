@@ -5,6 +5,7 @@ import android.content.Context;
 import com.sohu.jch.krnt_android_group.model.ExistParticipantMsgBean;
 import com.sohu.jch.krnt_android_group.model.ParticipantMsgBean;
 import com.sohu.jch.krnt_android_group.model.ParticipantSdpMsgBean;
+import com.sohu.jch.krnt_android_group.view.play.ReportFragment;
 import com.sohu.kurento.group.KPeerConnectionClient;
 import com.sohu.kurento.util.LogCat;
 
@@ -13,10 +14,13 @@ import org.webrtc.IceCandidate;
 import org.webrtc.PeerConnection;
 import org.webrtc.PeerConnectionFactory;
 import org.webrtc.SessionDescription;
+import org.webrtc.StatsReport;
 
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
+import java.util.Timer;
+import java.util.TimerTask;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 
@@ -56,6 +60,10 @@ public class RoomController implements KGroupSocketClient.KGroupInternalEvents, 
 
         public void onRoomExists(String name);
 
+    }
+
+    public interface ReportStatusEvents{
+        public void reportstate(StatsReport[] state);
     }
 
     public RoomController(Context context, String roomName) {
@@ -232,6 +240,59 @@ public class RoomController implements KGroupSocketClient.KGroupInternalEvents, 
 
         controllerEvents.onReportError(name, msg);
     }
+
+    /**
+     * 设置要显示的participant.
+     * @param participant
+     */
+    public void setReportParticipant( Participant participant){
+
+        this.reportParticipant = participant;
+
+    }
+
+    private Participant reportParticipant;
+
+    /**
+     * 开启状态显示.
+     * @param fragment
+     * @param delay
+     * @param period
+     */
+    public void startReportTimer(ReportFragment fragment, long delay, long period){
+        final MyReportStatsEvents reportStatsEvents = new MyReportStatsEvents(fragment);
+        timer.schedule(new TimerTask() {
+            @Override
+            public void run() {
+                if (reportParticipant != null){
+                    reportParticipant.getStatus(reportStatsEvents);
+                }
+            }
+        }, delay, period);
+    }
+
+    public void cancelReportTimer(){
+        timer.cancel();
+    }
+
+    Timer timer = new Timer();
+
+
+    static class MyReportStatsEvents implements ReportStatusEvents{
+
+        ReportFragment fragment;
+
+        public MyReportStatsEvents(ReportFragment fragment) {
+            this.fragment = fragment;
+        }
+
+        @Override
+        public void reportstate(StatsReport[] state) {
+            if (fragment != null)
+                fragment.updateEncoderStatistics(state);
+        }
+    }
+
 
     public Set<String> getParticipantNames() {
 

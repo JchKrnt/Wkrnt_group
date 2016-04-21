@@ -44,8 +44,6 @@ public class LooperExecutor extends Thread implements Executor {
     private boolean running = false;
     private long threadId;
 
-    AsyncTaskCompat taskCompat = new AsyncTaskCompat();
-
     @Override
     public void run() {
         Looper.prepare();

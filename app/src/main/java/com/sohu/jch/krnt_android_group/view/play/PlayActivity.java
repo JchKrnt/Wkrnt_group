@@ -7,6 +7,9 @@ import android.content.Intent;
 import android.content.IntentFilter;
 import android.media.AudioManager;
 import android.os.Bundle;
+import android.support.v4.app.Fragment;
+import android.support.v4.app.FragmentManager;
+import android.support.v4.app.FragmentTransaction;
 import android.support.v7.app.AlertDialog;
 import android.support.v7.app.AppCompatActivity;
 import android.support.v7.widget.GridLayoutManager;
@@ -16,6 +19,7 @@ import android.view.KeyEvent;
 import android.view.View;
 import android.view.WindowManager;
 import android.widget.Button;
+import android.widget.FrameLayout;
 import android.widget.TextView;
 
 import com.sohu.jch.krnt_android_group.R;
@@ -31,8 +35,55 @@ import com.sohu.kurento.util.SinglExecterPool;
 
 public class PlayActivity extends AppCompatActivity implements RoomController.RoomControllerViewEvents, View.OnClickListener {
 
+    public static final String EXTRA_ROOMID =
+            "org.appspot.apprtc.ROOMID";
+    public static final String EXTRA_LOOPBACK =
+            "org.appspot.apprtc.LOOPBACK";
+    public static final String EXTRA_NAME =
+            "org.appspot.apprtc.name";
+    public static final String EXTRA_ROOMNAME =
+            "org.appspot.apprtc.roomName";
+    public static final String EXTRA_VIDEO_CALL =
+            "org.appspot.apprtc.VIDEO_CALL";
+    public static final String EXTRA_VIDEO_WIDTH =
+            "org.appspot.apprtc.VIDEO_WIDTH";
+    public static final String EXTRA_VIDEO_HEIGHT =
+            "org.appspot.apprtc.VIDEO_HEIGHT";
+    public static final String EXTRA_VIDEO_FPS =
+            "org.appspot.apprtc.VIDEO_FPS";
+    public static final String EXTRA_VIDEO_CAPTUREQUALITYSLIDER_ENABLED =
+            "org.appsopt.apprtc.VIDEO_CAPTUREQUALITYSLIDER";
+    public static final String EXTRA_VIDEO_BITRATE =
+            "org.appspot.apprtc.VIDEO_BITRATE";
+    public static final String EXTRA_VIDEO_MAX_BITRATE =
+            "org.appspot.apprtc.VIDEO_MAX_BITRATE";
+    public static final String EXTRA_VIDEOCODEC =
+            "org.appspot.apprtc.VIDEOCODEC";
+    public static final String EXTRA_HWCODEC_ENABLED =
+            "org.appspot.apprtc.HWCODEC";
+    public static final String EXTRA_CAPTURETOTEXTURE_ENABLED =
+            "org.appspot.apprtc.CAPTURETOTEXTURE";
+    public static final String EXTRA_AUDIO_MAX_BITRATE =
+            "org.appspot.apprtc.AUDIO_MAX_BITRATE";
+    public static final String EXTRA_AUDIOCODEC =
+            "org.appspot.apprtc.AUDIOCODEC";
+    public static final String EXTRA_NOAUDIOPROCESSING_ENABLED =
+            "org.appspot.apprtc.NOAUDIOPROCESSING";
+    public static final String EXTRA_AECDUMP_ENABLED =
+            "org.appspot.apprtc.AECDUMP";
+    public static final String EXTRA_OPENSLES_ENABLED =
+            "org.appspot.apprtc.OPENSLES";
+    public static final String EXTRA_DISPLAY_HUD =
+            "org.appspot.apprtc.DISPLAY_HUD";
+    public static final String EXTRA_TRACING = "org.appspot.apprtc.TRACING";
+    public static final String EXTRA_CMDLINE =
+            "org.appspot.apprtc.CMDLINE";
+    public static final String EXTRA_RUNTIME =
+            "org.appspot.apprtc.RUNTIME";
+
     private RecyclerView recview;
     private VideoRecycleAdapter adapter;
+    private FrameLayout reportFrame;
     private RoomController roomController;
     private boolean isActivitying = false;
     private Button closebtn;
@@ -40,8 +91,13 @@ public class PlayActivity extends AppCompatActivity implements RoomController.Ro
 
     private PlayBroadCastReceiver receiver = null;
     private AppRTCAudioManager audioManager = null;
+    private KPeerConnectionClient.PeerConnectionParameters peerConnectionParameters;
+    private OnRecyclerViewItemClickListener recyclerViewItemClickListener = new OnRecyclerViewItemClickListener();
 
     private AudioManager sysAudioManager;
+
+    ReportFragment reportFrag;
+
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -65,12 +121,14 @@ public class PlayActivity extends AppCompatActivity implements RoomController.Ro
         initialize();
     }
 
+
+
     @Override
     protected void onStart() {
         super.onStart();
         registerReceiver(receiver, new IntentFilter(Constants.SOCKET_RECEIVER_FILTER));
         audioManager.init();
-        roomController.joinRoom(getIntent().getStringExtra("name"));
+        roomController.joinRoom(getIntent().getStringExtra(EXTRA_NAME));
     }
 
     @Override
@@ -78,7 +136,6 @@ public class PlayActivity extends AppCompatActivity implements RoomController.Ro
         super.onResume();
         isActivitying = true;
         roomController.startVideo();
-
     }
 
     @Override
@@ -86,14 +143,20 @@ public class PlayActivity extends AppCompatActivity implements RoomController.Ro
         unregisterReceiver(receiver);
         super.onPause();
         roomController.stopVideo();
-        audioManager.close();
+
     }
 
     @Override
     protected void onStop() {
         isActivitying = false;
-
+        audioManager.close();
         super.onStop();
+    }
+
+    @Override
+    protected void onDestroy() {
+
+        super.onDestroy();
     }
 
     @Override
@@ -102,6 +165,7 @@ public class PlayActivity extends AppCompatActivity implements RoomController.Ro
             case R.id.close_btn: {
                 closeRoom();
 //                adapter.notifyInsertedParticipant(adapter.getItemCount(), "participant " + adapter.getItemCount());
+
                 break;
             }
         }
@@ -112,16 +176,19 @@ public class PlayActivity extends AppCompatActivity implements RoomController.Ro
         closebtn = (Button) findViewById(R.id.close_btn);
         recview = (RecyclerView) findViewById(R.id.rec_view);
         nameTv = (TextView) findViewById(R.id.room_name_tv);
+        reportFrame = (FrameLayout) findViewById(R.id.report_frame);
         adapter = new VideoRecycleAdapter(getApplicationContext());
+        adapter.addItemClickListener(recyclerViewItemClickListener);
         recview.setAdapter(adapter);
         recview.setHasFixedSize(true);
         recview.setLayoutManager(new GridLayoutManager(getApplicationContext(), 2, LinearLayoutManager.VERTICAL, false));
         recview.addItemDecoration(new DividerItemDecoration(getApplicationContext(), DividerItemDecoration.VERTICAL_LIST));
 
-        nameTv.setText(getIntent().getStringExtra("roomName"));
+        nameTv.setText(getIntent().getStringExtra(EXTRA_NAME));
         LogCat.debug("--- after nit view.");
 
-        roomController = new RoomController(getApplicationContext(), getIntent().getStringExtra("roomName"));
+        roomController = new RoomController(getApplicationContext(), getIntent().getStringExtra(EXTRA_ROOMNAME));
+        initPCParameter();
         roomController.setControllerEvents(this);
 
         closebtn.setOnClickListener(this);
@@ -137,6 +204,39 @@ public class PlayActivity extends AppCompatActivity implements RoomController.Ro
         );
 
         receiver = new PlayBroadCastReceiver();
+
+        showReportLayer();
+
+    }
+
+    private void showReportLayer(){
+
+        if (SharePrefUtil.getInstance(getApplicationContext(), R.xml.setting_pref).getReportAble()){
+            FragmentManager fm = getSupportFragmentManager();
+            FragmentTransaction ft = fm.beginTransaction();
+            reportFrag = new ReportFragment();
+            ft.add(R.id.report_frame, reportFrag);
+            ft.commit();
+            roomController.startReportTimer(reportFrag, 0, 1000);
+        }
+    }
+
+    private void initPCParameter(){
+
+        Intent intent = getIntent();
+        peerConnectionParameters = new KPeerConnectionClient.PeerConnectionParameters(
+                intent.getBooleanExtra(EXTRA_VIDEO_CALL, true), false,
+                intent.getIntExtra(EXTRA_VIDEO_WIDTH, 0),
+                intent.getIntExtra(EXTRA_VIDEO_HEIGHT, 0),
+                intent.getIntExtra(EXTRA_VIDEO_FPS, 30),
+                intent.getIntExtra(EXTRA_VIDEO_MAX_BITRATE, 1000)/2,
+                intent.getIntExtra(EXTRA_VIDEO_MAX_BITRATE, 1000),
+                intent.getStringExtra(EXTRA_VIDEOCODEC),true,
+                intent.getIntExtra(EXTRA_AUDIO_MAX_BITRATE, 300)/2,
+                intent.getIntExtra(EXTRA_AUDIO_MAX_BITRATE, 300),
+                intent.getStringExtra(EXTRA_AUDIOCODEC),
+                intent.getBooleanExtra(EXTRA_NOAUDIOPROCESSING_ENABLED, false),true
+        );
     }
 
     /**********************
@@ -144,9 +244,6 @@ public class PlayActivity extends AppCompatActivity implements RoomController.Ro
      ***********************/
     @Override
     public KPeerConnectionClient.PeerConnectionParameters getPeerConnectionParam() {
-
-        KPeerConnectionClient.PeerConnectionParameters peerConnectionParameters = new KPeerConnectionClient.PeerConnectionParameters(SharePrefUtil.getInstance(getApplicationContext(), R.xml.setting_pref).getVedioAble(),
-                false, 0, 0, 18, 200, KPeerConnectionClient.VIDEO_CODEC_VP8, true, 128, KPeerConnectionClient.AUDIO_CODEC_OPUS, false, true);
 
         return peerConnectionParameters;
     }
@@ -223,6 +320,9 @@ public class PlayActivity extends AppCompatActivity implements RoomController.Ro
             @Override
             public void run() {
                 setResult(RESULT_OK);
+                if (SharePrefUtil.getInstance(getApplicationContext(), R.xml.setting_pref).getReportAble()){
+                    roomController.cancelReportTimer();
+                }
                 finish();
             }
         });
@@ -260,9 +360,13 @@ public class PlayActivity extends AppCompatActivity implements RoomController.Ro
     }
 
     private void closeRoom() {
+        if (SharePrefUtil.getInstance(getApplicationContext(), R.xml.setting_pref).getReportAble()){
+            roomController.cancelReportTimer();
+        }
         roomController.exitRoom();
         PlayActivity.this.setResult(RESULT_OK);
         PlayActivity.this.finish();
+
         SinglExecterPool.getIntance().shutdown();
     }
 
@@ -277,4 +381,15 @@ public class PlayActivity extends AppCompatActivity implements RoomController.Ro
             }
         }
     }
+
+    private class OnRecyclerViewItemClickListener implements VideoRecycleAdapter.OnItemClickListener{
+
+        @Override
+        public void onItemClick(View view, Participant participant) {
+
+            roomController.setReportParticipant(participant);
+        }
+    }
+
+
 }

@@ -22,6 +22,8 @@ import android.os.Build;
 import android.os.Process;
 import android.os.SystemClock;
 
+import com.sohu.kurento.util.LogCat;
+
 import org.webrtc.Logging;
 
 class  WebRtcAudioRecord {
@@ -75,23 +77,27 @@ class  WebRtcAudioRecord {
           == AudioRecord.RECORDSTATE_RECORDING);
 
       long lastTime = System.nanoTime();
-      while (keepAlive) {
-        int bytesRead = audioRecord.read(byteBuffer, byteBuffer.capacity());
-        if (bytesRead == byteBuffer.capacity()) {
-          nativeDataIsRecorded(bytesRead, nativeAudioRecord);
-        } else {
-          Logging.e(TAG,"AudioRecord.read failed: " + bytesRead);
-          if (bytesRead == AudioRecord.ERROR_INVALID_OPERATION) {
-            keepAlive = false;
+      try {
+        while (keepAlive) {
+          int bytesRead = audioRecord.read(byteBuffer, byteBuffer.capacity());
+          if (bytesRead == byteBuffer.capacity()) {
+            nativeDataIsRecorded(bytesRead, nativeAudioRecord);
+          } else {
+            Logging.e(TAG, "AudioRecord.read failed: " + bytesRead);
+            if (bytesRead == AudioRecord.ERROR_INVALID_OPERATION) {
+              keepAlive = false;
+            }
+          }
+          if (DEBUG) {
+            long nowTime = System.nanoTime();
+            long durationInMs =
+                    TimeUnit.NANOSECONDS.toMillis((nowTime - lastTime));
+            lastTime = nowTime;
+            Logging.d(TAG, "bytesRead[" + durationInMs + "] " + bytesRead);
           }
         }
-        if (DEBUG) {
-          long nowTime = System.nanoTime();
-          long durationInMs =
-              TimeUnit.NANOSECONDS.toMillis((nowTime - lastTime));
-          lastTime = nowTime;
-          Logging.d(TAG, "bytesRead[" + durationInMs + "] " + bytesRead);
-        }
+      } catch (UnsatisfiedLinkError error){
+        LogCat.e(error.getMessage());
       }
 
       try {

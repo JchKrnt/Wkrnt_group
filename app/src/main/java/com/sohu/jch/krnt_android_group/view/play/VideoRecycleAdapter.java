@@ -22,7 +22,7 @@ import java.util.ArrayList;
 /**
  * Created by jingbiaowang on 2015/12/7.
  */
-public class VideoRecycleAdapter extends RecyclerView.Adapter<VideoRecycleAdapter.VideoHolder> {
+public class VideoRecycleAdapter extends RecyclerView.Adapter<VideoRecycleAdapter.VideoHolder> implements View.OnClickListener{
 
 
     // Local preview screen position before call is connected.
@@ -40,6 +40,7 @@ public class VideoRecycleAdapter extends RecyclerView.Adapter<VideoRecycleAdapte
     private static final int REMOTE_Y = 0;
     private static final int REMOTE_WIDTH = 100;
     private static final int REMOTE_HEIGHT = 100;
+    private OnItemClickListener itemClickListener;
 
     private Context context;
 
@@ -47,9 +48,18 @@ public class VideoRecycleAdapter extends RecyclerView.Adapter<VideoRecycleAdapte
 
     private ArrayList<Participant> data;
 
+    public interface OnItemClickListener{
+
+        public void onItemClick (View view, Participant participant);
+    }
+
     public VideoRecycleAdapter(Context context) {
         this.context = context;
         this.data = new ArrayList<>();
+    }
+
+    public void addItemClickListener(OnItemClickListener itemClickListener){
+        this.itemClickListener = itemClickListener;
     }
 
     @Override
@@ -57,7 +67,7 @@ public class VideoRecycleAdapter extends RecyclerView.Adapter<VideoRecycleAdapte
         LogCat.debug(TAG + " onCreateViewHolder position ");
         VideoHolder viewHolder = new VideoHolder(LayoutInflater.from(context).inflate(R.layout.video_item, parent, false));
         viewHolder.videoview.init(data.get(0).getEglBase().getEglBaseContext(), new PVideoRenderEvents());
-
+        viewHolder.videoview.setOnClickListener(this);
         return viewHolder;
     }
 
@@ -77,7 +87,9 @@ public class VideoRecycleAdapter extends RecyclerView.Adapter<VideoRecycleAdapte
         }
 
         holder.participant = data.get(position);
+        holder.videoview.setTag(participant);
         holder.videonametv.setText(data.get(position).getName());
+
     }
 
     @Override
@@ -95,6 +107,12 @@ public class VideoRecycleAdapter extends RecyclerView.Adapter<VideoRecycleAdapte
         LogCat.debug("adapter count : " + count);
 
         return count;
+    }
+
+    @Override
+    public void onClick(View v) {
+
+        itemClickListener.onItemClick(v, (Participant) v.getTag());
     }
 
     public void notifyInsertedParticipant(int position, Participant participant) {

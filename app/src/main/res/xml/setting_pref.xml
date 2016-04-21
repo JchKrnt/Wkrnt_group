@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
-<PreferenceScreen xmlns:android="http://schemas.android.com/apk/res/android">
+<PreferenceScreen xmlns:android="http://schemas.android.com/apk/res/android"
+    >
     <PreferenceCategory
         android:key="@string/pref_key_miscellaneous_category"
         android:title="@string/pref_title_miscellaneous">
@@ -10,7 +11,7 @@
             android:dialogTitle="@string/pref_title_host_dialog"
             android:inputType="textUri"
             android:key="@string/pref_key_host"
-            android:title="@string/pref_title_host" />
+            android:title="@string/pref_title_host"/>
 
         <EditTextPreference
             android:capitalize="words"
@@ -18,7 +19,7 @@
             android:dialogTitle=""
             android:inputType="number"
             android:key="@string/pref_key_port"
-            android:title="@string/pref_title_port" />
+            android:title="@string/pref_title_port"/>
 
         <EditTextPreference
             android:capitalize="words"
@@ -26,7 +27,7 @@
             android:dialogTitle="@string/pref_title_method_dialog"
             android:inputType="text"
             android:key="@string/pref_key_method"
-            android:title="@string/pref_title_method" />
+            android:title="@string/pref_title_method"/>
 
         <EditTextPreference
             android:capitalize="words"
@@ -34,7 +35,14 @@
             android:dialogTitle="@string/pref_title_stun_dialog"
             android:inputType="text"
             android:key="@string/pref_key_stun"
-            android:title="@string/pref_title_stun" />
+            android:title="@string/pref_title_stun"/>
+
+        <CheckBoxPreference
+            android:key="@string/pref_key_report_status"
+            android:title="@string/pref_title_report_status"
+            android:defaultValue="false"
+            android:checked="false"/>
+
     </PreferenceCategory>
 
     <PreferenceCategory
@@ -44,6 +52,82 @@
             android:checked="true"
             android:defaultValue="true"
             android:key="@string/pref_key_video_callable"
-            android:title="@string/pref_title_video_callable" />
+            android:title="@string/pref_title_video_callable"/>
+
+        <ListPreference
+            android:defaultValue="@string/pref_default_video_code"
+            android:dialogTitle="@string/pref_list_title_video_code"
+            android:entries="@array/videoCodecs"
+            android:entryValues="@array/videoCodecs"
+            android:key="@string/pref_key_video_code"
+            android:title="@string/pref_title_video_code"/>
+
+        <ListPreference
+            android:defaultValue="@string/pref_default_video_frame"
+            android:dialogTitle="@string/pref_list_title_video_frame"
+            android:entries="@array/cameraFps"
+            android:entryValues="@array/cameraFps"
+            android:key="@string/pref_key_video_frame"
+            android:title="@string/pref_title_video_frame"/>
+
+        <ListPreference
+            android:defaultValue="@string/pref_default_video_resolution_value"
+            android:dialogTitle="@string/pref__list_title_video_resolution"
+            android:entries="@array/pref_video_resolution"
+            android:entryValues="@array/pref_video_resolution_value"
+            android:key="@string/pref_key_video_resulotion"
+            android:title="@string/pref_title_video_resolution"/>
+
+        <ListPreference
+            android:defaultValue="@string/pref_maxVideoBitrate_default"
+            android:dialogTitle="@string/pref_maxVideoBitrate_dlg"
+            android:entries="@array/maxBitrate"
+            android:entryValues="@array/maxBitrate"
+            android:key="@string/pref_maxVideoBitrate_key"
+            android:title="@string/pref_maxVideoBitrate_title"/>
+
+        <EditTextPreference
+            android:defaultValue="@string/pref_maxVideoBitratevalue_default"
+            android:dialogTitle="@string/pref_maxVideoBitratevalue_dlg"
+            android:inputType="number"
+            android:key="@string/pref_maxVideoBitratevalue_key"
+            android:title="@string/pref_maxVideoBitratevalue_title"/>
+
     </PreferenceCategory>
+
+    <PreferenceCategory
+        android:key="@string/pref_audio_setting"
+        android:title="@string/pref_audio_setting">
+
+        <ListPreference
+            android:key="@string/pref_audiocodec_key"
+            android:title="@string/pref_audiocodec_title"
+            android:defaultValue="@string/pref_audiocodec_default"
+            android:dialogTitle="@string/pref_audiocodec_dlg"
+            android:entries="@array/audioCodecs"
+            android:entryValues="@array/audioCodecs" />
+
+        <ListPreference
+            android:key="@string/pref_maxAudiobitrate_key"
+            android:title="@string/pref_MaxAudiobitrate_title"
+            android:defaultValue="@string/pref_maxAudiobitrate_default"
+            android:dialogTitle="@string/pref_maxAudiobitrate_dlg"
+            android:entries="@array/maxBitrate"
+            android:entryValues="@array/maxBitrate" />
+
+        <EditTextPreference
+            android:key="@string/pref_maxAudiobitratevalue_key"
+            android:title="@string/pref_maxAudiobitratevalue_title"
+            android:inputType="number"
+            android:defaultValue="@string/pref_maxAudiobitratevalue_default"
+            android:dialogTitle="@string/pref_maxAudiobitratevalue_dlg" />
+
+        <CheckBoxPreference
+            android:key="@string/pref_audioprocessing_key"
+            android:title="@string/pref_audioprocessing_title"
+            android:defaultValue="@string/pref_audioprocessing_default" />
+
+    </PreferenceCategory>
+
+
 </PreferenceScreen>

@@ -39,6 +39,8 @@ import java.util.Date;
 import java.util.EnumSet;
 import java.util.LinkedList;
 import java.util.List;
+import java.util.Objects;
+import java.util.StringTokenizer;
 import java.util.Timer;
 import java.util.TimerTask;
 import java.util.concurrent.ConcurrentHashMap;
@@ -63,6 +65,9 @@ public class KPeerConnectionClient {
     public static final String AUDIO_CODEC_ISAC = "ISAC";
     private static final String VIDEO_CODEC_PARAM_START_BITRATE =
             "x-google-start-bitrate";
+    private static final String VIDEO_CODE_PAEAM_MAX_BITRATE = "x-google-max-bitrate";
+    private static final String VIDEO_CODE_PAEAM_MIN_BITRATE = "x-google-min-bitrate";
+    private static final String VIDEO_CODE_PAEAM_MAX_QUANTIZATION_BITRATE = "x-google-max-quantization";
     private static final String AUDIO_CODEC_PARAM_BITRATE = "maxaveragebitrate";
     private static final String AUDIO_ECHO_CANCELLATION_CONSTRAINT = "googEchoCancellation";
     private static final String AUDIO_AUTO_GAIN_CONTROL_CONSTRAINT = "googAutoGainControl";
@@ -80,6 +85,9 @@ public class KPeerConnectionClient {
     private static final int MAX_VIDEO_WIDTH = 1280;
     private static final int MAX_VIDEO_HEIGHT = 1280;
     private static final int MAX_VIDEO_FPS = 30;
+    private static final Object lockObj = new Object();
+    private static boolean factoryInitFlag = false;
+    private static int peerconnectionNum = 0;
 
     //    private static final KPeerConnectionClient instance = new KPeerConnectionClient();
     private final PCObserver pcObserver = new PCObserver();
@@ -143,6 +151,14 @@ public class KPeerConnectionClient {
         this.options = options;
     }
 
+    public enum VideoCodeType {
+        VP8, VP9, H263 ,H264;
+    }
+
+    public enum AudioCodeType {
+        opus, ISAC;
+    }
+
     public static enum ConnectionType {
         READ_ONLY, SEND_ONLY, BOTH_WAY
     }
@@ -157,10 +173,12 @@ public class KPeerConnectionClient {
         public final int videoHeight;
         public final int videoFps;
         public final int videoStartBitrate;
+        public final int maxVideoBitrate;
         public final String videoCodec;
         public final boolean videoCodecHwAcceleration;
         public final boolean captureToTexture;
         public final int audioStartBitrate;
+        public final int maxAudioBitrate;
         public final String audioCodec;
         public final boolean tracing;
         public final boolean noAudioProcessing;
@@ -170,9 +188,9 @@ public class KPeerConnectionClient {
 
         public PeerConnectionParameters(
                 boolean videoCallEnabled, boolean loopback,
-                int videoWidth, int videoHeight, int videoFps, int videoStartBitrate,
+                int videoWidth, int videoHeight, int videoFps, int videoStartBitrate, int maxVideoBitrate,
                 String videoCodec, boolean videoCodecHwAcceleration,
-                int audioStartBitrate, String audioCodec,
+                int audioStartBitrate, int maxAudioBitrate,String audioCodec,
                 boolean noAudioProcessing, boolean cpuOveruseDetection) {
             this.videoCallEnabled = videoCallEnabled;
             this.loopback = loopback;
@@ -180,15 +198,17 @@ public class KPeerConnectionClient {
             this.videoHeight = videoHeight;
             this.videoFps = videoFps;
             this.videoStartBitrate = videoStartBitrate;
+            this.maxVideoBitrate = maxVideoBitrate;
             this.videoCodec = videoCodec;
             this.tracing = true;
             this.videoCodecHwAcceleration = videoCodecHwAcceleration;
             this.captureToTexture = true;
             this.audioStartBitrate = audioStartBitrate;
+            this.maxAudioBitrate = maxAudioBitrate;
             this.audioCodec = audioCodec;
             this.noAudioProcessing = noAudioProcessing;
             this.cpuOveruseDetection = cpuOveruseDetection;
-            this.aecDump = true;
+            this.aecDump = false;
             this.useOpenSLES = true;
         }
     }
@@ -242,20 +262,6 @@ public class KPeerConnectionClient {
     }
 
     private void createPeerConnectionFactoryInternal(Context context) {
-        LogCat.v("before init peerconnectionFactory internalTracer success.");
-//        PeerConnectionFactory.initializeInternalTracer();
-        LogCat.v("init peerconnectionFactory internalTracer success.");
-//        if (peerConnectionParameters.tracing) {
-//            PeerConnectionFactory.startInternalTracingCapture(
-//                    Environment.getExternalStorageDirectory().getAbsolutePath() + File.separator
-//                            + "webrtc-trace.txt");
-//        }
-        LogCat.debug(TAG + " Create peer connection factory. Use video: " +
-                peerConnectionParameters.videoCallEnabled);
-        isError = false;
-
-        PeerConnectionFactory.initializeFieldTrials(FIELD_TRIAL_AUTOMATIC_RESIZE);
-        LogCat.v("init FieldTrials success");
 
             // Check preferred video codec.
         preferredVideoCodec = VIDEO_CODEC_VP8;
@@ -267,8 +273,13 @@ public class KPeerConnectionClient {
             }
         }
         Log.d(TAG, "Pereferred video codec: " + preferredVideoCodec);
-
-
+        synchronized (lockObj) {
+            ++peerconnectionNum;
+            if (!factoryInitFlag) {
+                initPeerconnectionFactory(context);
+                factoryInitFlag = !factoryInitFlag;
+            }
+        }
             // Check if ISAC is used by default.
         preferIsac = false;
         if (peerConnectionParameters.audioCodec != null
@@ -284,14 +295,36 @@ public class KPeerConnectionClient {
             Log.d(TAG, "Allow OpenSL ES audio if device supports it");
             WebRtcAudioManager.setBlacklistDeviceForOpenSLESUsage(false);
         }
+        LogCat.debug("webRtcAudioManager SLEUsage set over.");
+
+        factory = new PeerConnectionFactory(options);
+            LogCat.debug("Factory networkIgnoreMask option: " + options.networkIgnoreMask);
+        LogCat.debug("Peer connection factory created.");
+    }
+
+    private void initPeerconnectionFactory(Context context) {
+
+        LogCat.v("before init peerconnectionFactory internalTracer success.");
+
+        PeerConnectionFactory.initializeInternalTracer();
+        LogCat.v("init peerconnectionFactory internalTracer success.");
+        if (peerConnectionParameters.tracing) {
+            PeerConnectionFactory.startInternalTracingCapture(
+                    Environment.getExternalStorageDirectory().getAbsolutePath() + File.separator
+                            + "webrtc-trace.txt");
+        }
+        LogCat.debug(TAG + " Create peer connection factory. Use video: " +
+                peerConnectionParameters.videoCallEnabled);
+        isError = false;
+
+        PeerConnectionFactory.initializeFieldTrials(FIELD_TRIAL_AUTOMATIC_RESIZE);
+        LogCat.v("init FieldTrials success");
 
         if (!PeerConnectionFactory.initializeAndroidGlobals(context, true, true,
                 peerConnectionParameters.videoCodecHwAcceleration)) {
             events.onPeerConnectionError("Failed to initializeAndroidGlobals");
         }
-        factory = new PeerConnectionFactory(options);
-            LogCat.debug("Factory networkIgnoreMask option: " + options.networkIgnoreMask);
-        LogCat.debug("Peer connection factory created.");
+
     }
 
     private void createMediaConstraintsInternal() {
@@ -461,11 +494,12 @@ public class KPeerConnectionClient {
             public void run() {
                 LogCat.debug(TAG + " addLocalRenderer");
                 VideoRenderer videoRenderer = new VideoRenderer(callBack);
-                if (localVideoTrack != null && connectionType != ConnectionType.READ_ONLY)
+                if (localVideoTrack != null && connectionType != ConnectionType.READ_ONLY) {
                     LogCat.debug(TAG + " addLocalRenderer now");
-                localVideoTrack.addRenderer(videoRenderer);
+                    localVideoTrack.addRenderer(videoRenderer);
 
-                localRenders.put(callBack, videoRenderer);
+                    localRenders.put(callBack, videoRenderer);
+                }
             }
         });
     }
@@ -610,8 +644,8 @@ public class KPeerConnectionClient {
         public void onPeerConnectionError(final String description);
     }
 
-    private static String setStartBitrate(String codec, boolean isVideoCodec,
-                                          String sdpDescription, int bitrateKbps) {
+    private static String setBitrate(String codec, boolean isVideoCodec,
+                                          String sdpDescription, int startBitrateKbps, int maxBitrateKbps) {
 
         LogCat.debug("before start bitrate :-- " + sdpDescription);
         String[] lines = sdpDescription.split("\r\n");
@@ -637,6 +671,8 @@ public class KPeerConnectionClient {
         LogCat.debug("Found " + codec + " rtpmap " + codecRtpMap
                 + " at " + lines[rtpmapLineIndex]);
 
+        //sdp.replace(/a=mid:video\r\n/g, 'a=mid:video\r\nb=AS:' + videoBandwidth + '\r\n')
+
         // Check if a=fmtp string already exist in remote SDP for this codec and
         // update it with new bitrate parameter.
         regex = "^a=fmtp:" + codecRtpMap + " \\w+=\\d+.*[\r]?$";
@@ -647,10 +683,16 @@ public class KPeerConnectionClient {
                 LogCat.debug("Found " + codec + " " + lines[i]);
                 if (isVideoCodec) {
                     lines[i] += "; " + VIDEO_CODEC_PARAM_START_BITRATE
-                            + "=" + bitrateKbps;
+                            + "=" + startBitrateKbps;
+                    lines[i] += "; " + VIDEO_CODE_PAEAM_MAX_BITRATE
+                            + "=" + maxBitrateKbps;
+                    lines[i] += "; " + VIDEO_CODE_PAEAM_MIN_BITRATE
+                            + "=" + maxBitrateKbps/10;
+                    lines[i] += "; " + VIDEO_CODE_PAEAM_MAX_QUANTIZATION_BITRATE
+                            + "=" + 25;
                 } else {
                     lines[i] += "; " + AUDIO_CODEC_PARAM_BITRATE
-                            + "=" + (bitrateKbps * 1000);
+                            + "=" + (maxBitrateKbps * 1000);
                 }
                 LogCat.debug("Update remote SDP line: " + lines[i]);
                 sdpFormatUpdated = true;
@@ -666,10 +708,13 @@ public class KPeerConnectionClient {
                 String bitrateSet;
                 if (isVideoCodec) {
                     bitrateSet = "a=fmtp:" + codecRtpMap + " "
-                            + VIDEO_CODEC_PARAM_START_BITRATE + "=" + bitrateKbps;
+                            + VIDEO_CODEC_PARAM_START_BITRATE + "=" + startBitrateKbps
+                            + "; " + VIDEO_CODE_PAEAM_MAX_BITRATE + "=" + maxBitrateKbps
+                            + "; " + VIDEO_CODE_PAEAM_MIN_BITRATE + "=" + maxBitrateKbps/10
+                            + "; " + VIDEO_CODE_PAEAM_MAX_QUANTIZATION_BITRATE + "=" + 25;
                 } else {
                     bitrateSet = "a=fmtp:" + codecRtpMap + " "
-                            + AUDIO_CODEC_PARAM_BITRATE + "=" + (bitrateKbps * 1000);
+                            + AUDIO_CODEC_PARAM_BITRATE + "=" + (startBitrateKbps * 1000);
                 }
                 LogCat.debug("Add remote SDP line: " + bitrateSet);
                 newSdpDescription.append(bitrateSet).append("\r\n");
@@ -677,8 +722,48 @@ public class KPeerConnectionClient {
 
         }
 
-        LogCat.debug("after start bitrate :-- " + sdpDescription);
+        LogCat.debug("after set bitrate :-- " + newSdpDescription);
         return newSdpDescription.toString();
+    }
+
+    /**
+     *
+     * @param sdp
+     * @param videoBandwidth
+     * @return
+     */
+    private static String setVideoBandwidth(String sdp, int videoBandwidth){
+
+        String[] lines = sdp.split("\r\n");
+        String regex = "^a=mid:video*[\r]?$";
+        Pattern pattern = Pattern.compile(regex);
+        int i = 0;
+        for (; i < lines.length; i++){
+            Matcher matcher = pattern.matcher(lines[i]);
+            if (matcher.matches()){
+
+                LogCat.debug("Found " + pattern.pattern() +" on " + lines[i]);
+                break;
+
+            }
+
+        }
+
+        StringBuilder sb = new StringBuilder();
+        for (int y = 0; y < lines.length; y++){
+            sb.append(lines[y]).append("\r\n");
+            if (y == i){
+                String ab = "b=AS:" + videoBandwidth;
+                sb.append(ab).append("\r\n");
+            }
+
+        }
+
+
+        LogCat.debug("after set videoWidth : " + sb.toString());
+        return sb.toString();
+
+
     }
 
     private static String preferCodec(
@@ -786,24 +871,28 @@ public class KPeerConnectionClient {
                 }
                 String sdpDescription = sdp.description;
                 if (preferIsac) {
-                    sdpDescription = preferCodec(sdpDescription, AUDIO_CODEC_ISAC, true);
+                    sdpDescription = preferCodec(sdpDescription, peerConnectionParameters.audioCodec, true);
                 }
                 if (videoCallEnabled) {
                     sdpDescription = preferCodec(sdpDescription, preferredVideoCodec, false);
                 }
                 if (videoCallEnabled && peerConnectionParameters.videoStartBitrate > 0) {
-                    sdpDescription = setStartBitrate(VIDEO_CODEC_VP8, true,
-                            sdpDescription, peerConnectionParameters.videoStartBitrate);
-                    sdpDescription = setStartBitrate(VIDEO_CODEC_VP9, true,
-                            sdpDescription, peerConnectionParameters.videoStartBitrate);
-                    sdpDescription = setStartBitrate(VIDEO_CODEC_H264, true,
-                            sdpDescription, peerConnectionParameters.videoStartBitrate);
+                    sdpDescription = setBitrate(VIDEO_CODEC_VP8, true,
+                            sdpDescription, peerConnectionParameters.videoStartBitrate, peerConnectionParameters.maxVideoBitrate);
+                    sdpDescription = setBitrate(VIDEO_CODEC_VP9, true,
+                            sdpDescription, peerConnectionParameters.videoStartBitrate, peerConnectionParameters.maxVideoBitrate);
+                    sdpDescription = setBitrate(VIDEO_CODEC_H264, true,
+                            sdpDescription, peerConnectionParameters.videoStartBitrate, peerConnectionParameters.maxVideoBitrate);
+
+                    sdpDescription = setVideoBandwidth(sdpDescription, peerConnectionParameters.maxVideoBitrate);
                 }
                 if (peerConnectionParameters.audioStartBitrate > 0) {
-                    sdpDescription = setStartBitrate(AUDIO_CODEC_OPUS, false,
-                            sdpDescription, peerConnectionParameters.audioStartBitrate);
+                    sdpDescription = setBitrate(AUDIO_CODEC_OPUS, false,
+                            sdpDescription, peerConnectionParameters.audioStartBitrate, peerConnectionParameters.maxAudioBitrate);
                 }
-                LogCat.debug("Set remote SDP.");
+
+
+                LogCat.debug("Set remote SDP , after setBitrate : " + sdpDescription);
                 SessionDescription sdpRemote = new SessionDescription(
                         sdp.type, sdpDescription);
                 peerConnection.setRemoteDescription(sdpObserver, sdpRemote);
@@ -922,11 +1011,19 @@ public class KPeerConnectionClient {
             }
             String sdpDescription = origSdp.description;
             if (preferIsac) {
-                sdpDescription = preferCodec(sdpDescription, AUDIO_CODEC_ISAC, true);
+                sdpDescription = preferCodec(sdpDescription, peerConnectionParameters.audioCodec, true);
             }
             if (videoCallEnabled) {
                 sdpDescription = preferCodec(sdpDescription, preferredVideoCodec, false);
             }
+
+            sdpDescription =setBitrate(VIDEO_CODEC_VP8, true, sdpDescription, peerConnectionParameters.videoStartBitrate, peerConnectionParameters.maxVideoBitrate);
+            sdpDescription =setBitrate(VIDEO_CODEC_VP9, true, sdpDescription, peerConnectionParameters.videoStartBitrate, peerConnectionParameters.maxVideoBitrate);
+            sdpDescription =setBitrate(VIDEO_CODEC_H264, true, sdpDescription, peerConnectionParameters.videoStartBitrate, peerConnectionParameters.maxVideoBitrate);
+            sdpDescription = setVideoBandwidth(sdpDescription, peerConnectionParameters.maxVideoBitrate);
+
+            sdpDescription = setBitrate(peerConnectionParameters.audioCodec, false, sdpDescription, peerConnectionParameters.audioStartBitrate, peerConnectionParameters.maxAudioBitrate);
+
             final SessionDescription sdp = new SessionDescription(
                     origSdp.type, sdpDescription);
             localSdp = sdp;
@@ -1091,12 +1188,12 @@ public class KPeerConnectionClient {
             executor.execute(new Runnable() {
                 @Override
                 public void run() {
-                    LogCat.v(pcObserverLogMsg + " onRemoveStream MediaStream : " + stream.label());
+//                    LogCat.v(pcObserverLogMsg + " onRemoveStream MediaStream : " + stream.label());
                     remoteVideoTrack = null;
-                    if (stream.videoTracks.size() >= 1) {
-                        stream.videoTracks.get(0).dispose();
-                        stream.audioTracks.get(0).dispose();
-                    }
+//                    if (stream.videoTracks.size() >= 1) {
+//                        stream.videoTracks.get(0).dispose();
+//                        stream.audioTracks.get(0).dispose();
+//                    }
                 }
             });
         }
@@ -1137,16 +1234,16 @@ public class KPeerConnectionClient {
 
         statsTimer.cancel();
 
-        LogCat.debug("Closing video Track.");
-        if (localVideoTrack != null) {
-            LogCat.debug("localVideo Track " + localVideoTrack.state());
-            for (VideoRenderer render :
-                    localRenders.values()) {
-                localVideoTrack.removeRenderer(render);
-            }
-//            localVideoTrack.dispose();
-            localVideoTrack = null;
-        }
+//        LogCat.debug("Closing video Track.");
+//        if (localVideoTrack != null) {
+//            LogCat.debug("localVideo Track " + localVideoTrack.state());
+//            for (VideoRenderer render :
+//                    localRenders.values()) {
+//                localVideoTrack.removeRenderer(render);
+//            }
+////            localVideoTrack.dispose();
+//            localVideoTrack = null;
+//        }
 
         LogCat.debug("Closing peer connection.");
 
@@ -1170,11 +1267,31 @@ public class KPeerConnectionClient {
         }
 
         options = null;
+        if (isPCFactoryStopAble()) {
+            LogCat.debug("Closing peer connection done.");
+            events.onPeerConnectionClosed();
+            LogCat.debug("prepare to stop tracingCapture.");
+            PeerConnectionFactory.stopInternalTracingCapture();
+            LogCat.debug("stop tracingCapture and prepare to shutdown InternalTracer");
+            PeerConnectionFactory.shutdownInternalTracer();
+            LogCat.debug("had shutdown internalTracer");
 
-        LogCat.debug("Closing peer connection done.");
-        events.onPeerConnectionClosed();
-        PeerConnectionFactory.stopInternalTracingCapture();
-        PeerConnectionFactory.shutdownInternalTracer();
+        }
+    }
+
+    /**
+     * When More than one PCFactory is created, mack sure the last one is closed.
+     *
+     * @return
+     */
+    private synchronized boolean isPCFactoryStopAble(){
+
+        if (--peerconnectionNum == 0){
+            factoryInitFlag = !factoryInitFlag;
+            return true;
+        }else {
+            return false;
+        }
     }
 
 
@@ -1206,6 +1323,11 @@ public class KPeerConnectionClient {
         }
     }
 
+    /**
+     * this method schedule must be stop before closing peerconnection.
+     *
+     * For exception:
+     */
     private void getStats() {
         if (peerConnection == null || isError) {
             return;
@@ -1219,6 +1341,16 @@ public class KPeerConnectionClient {
         if (!success) {
             Log.e(TAG, "getStats() returns false!");
         }
+    }
+
+    public void enableStatsEvent(){
+
+        executor.execute(new Runnable() {
+            @Override
+            public void run() {
+                getStats();
+            }
+        });
     }
 
     public void enableStatsEvents(boolean enable, int periodMs) {

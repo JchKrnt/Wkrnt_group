@@ -7,6 +7,7 @@
     android:paddingLeft="@dimen/activity_horizontal_margin"
     android:paddingRight="@dimen/activity_horizontal_margin"
     android:paddingTop="@dimen/activity_vertical_margin"
+                android:background="@color/colorAccent"
     tools:context="com.sohu.jch.krnt_android_group.view.play.PlayActivity">
 
     <LinearLayout
@@ -50,5 +51,9 @@
         android:layout_below="@id/room_name_ll"
         android:background="@color/dot_green"></android.support.v7.widget.RecyclerView>
 
-
+    <FrameLayout
+        android:id="@+id/report_frame"
+        android:layout_above="@id/close_btn"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"></FrameLayout>
 </RelativeLayout>

@@ -37,6 +37,7 @@ public class Participant implements KPeerConnectionClient.KPeerConnectionEvents 
     private ConnectionType connectionType;
     private boolean iceConnected = false;
     private ParticipantEvents participantEvents;
+    private RoomController.ReportStatusEvents reportStatusEvents;
 
     public Participant(Context context, EglBase eglBase, String name, ConnectionType connectionType) {
 
@@ -229,10 +230,28 @@ public class Participant implements KPeerConnectionClient.KPeerConnectionEvents 
         });
     }
 
+    public void getStatus(RoomController.ReportStatusEvents events){
+        this.reportStatusEvents = events;
+        if(peer != null) {
+            peer.enableStatsEvent();
+        }
+    }
+
+    public void cancelStatus(){
+        this.reportStatusEvents = null;
+    }
+
     /**
      * Disconnect from remote resources, dispose of local resources, and exit.
      */
     public void disconnectPeer() {
+
+        if (peer != null) {
+            LogCat.debug("Participant " + name + " peer disconnect : ");
+            iceConnected = false;
+            peer.close();
+            peer = null;
+        }
 
         if (localVideoView != null) {
             localVideoView.release();
@@ -241,12 +260,6 @@ public class Participant implements KPeerConnectionClient.KPeerConnectionEvents 
         if (remoteVideoView != null) {
             remoteVideoView.release();
             remoteVideoView = null;
-        }
-        if (peer != null) {
-            LogCat.debug("Participant " + name + " peer disconnect : ");
-            iceConnected = false;
-            peer.close();
-            peer = null;
         }
     }
 
@@ -266,7 +279,10 @@ public class Participant implements KPeerConnectionClient.KPeerConnectionEvents 
     @Override
     public void onPeerConnectionStatsReady(StatsReport[] reports) {
 
-        LogCat.i(name + " peer is ready : " + reports);
+        LogCat.i(name + " peer is ready : " + reports.toString());
+        if (reportStatusEvents != null) {
+            reportStatusEvents.reportstate(reports);
+        }
     }
 
     @Override

@@ -28,6 +28,7 @@ public class PeerConnectionFactory {
   private static Thread signalingThread;
   private EglBase localEglbase;
   private EglBase remoteEglbase;
+  private boolean initialed = false;
 
   public static class Options {
     // Keep in sync with webrtc/base/network.h!

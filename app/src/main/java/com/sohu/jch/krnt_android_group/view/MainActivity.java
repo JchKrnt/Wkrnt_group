@@ -1,6 +1,8 @@
 package com.sohu.jch.krnt_android_group.view;
 
 import android.content.Intent;
+import android.content.SharedPreferences;
+import android.graphics.Point;
 import android.os.Bundle;
 import android.support.v7.app.AppCompatActivity;
 import android.view.Menu;
@@ -12,6 +14,7 @@ import android.widget.Toast;
 
 import com.sohu.jch.krnt_android_group.R;
 import com.sohu.jch.krnt_android_group.controller.KGroupSocketClient;
+import com.sohu.jch.krnt_android_group.util.SharePrefUtil;
 import com.sohu.jch.krnt_android_group.view.play.PlayActivity;
 
 public class MainActivity extends AppCompatActivity implements View.OnClickListener {
@@ -24,12 +27,20 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
     private static final int SETTING_INTENT = 434;
     private static final int PLAY_INTENT = 435;
 
+    private SharedPreferences preferences = null;
+
+    private SharePrefUtil prefUtil;
+
+
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_main);
+        prefUtil = SharePrefUtil.getInstance(getApplicationContext(), R.xml.setting_pref);
+
         initialize();
     }
+
 
     private void initialize() {
 
@@ -76,8 +87,9 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
                     Toast.makeText(getApplicationContext(), "请输入你的昵称和房间名！", Toast.LENGTH_SHORT).show();
                 } else {
                     Intent intent = new Intent(MainActivity.this, PlayActivity.class);
-                    intent.putExtra("name", nameStr);
-                    intent.putExtra("roomName", roomNameStr);
+                    intent.putExtra(PlayActivity.EXTRA_NAME, nameStr);
+                    intent.putExtra(PlayActivity.EXTRA_ROOMNAME, roomNameStr);
+                    prepareData(intent);
                     startActivityForResult(intent, PLAY_INTENT);
                 }
                 break;
@@ -106,6 +118,20 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
 
 
         }
+    }
 
+    private void prepareData(Intent intent){
+
+        intent.putExtra( PlayActivity.EXTRA_VIDEO_CALL, prefUtil.getVedioAble());
+        //传递enum.
+        intent.putExtra(PlayActivity.EXTRA_VIDEOCODEC, prefUtil.getVideoCodeType().name());
+        intent.putExtra(PlayActivity.EXTRA_VIDEO_FPS, prefUtil.getVideoFps());
+        Point videoResolution = prefUtil.getVideoResolution();
+        intent.putExtra(PlayActivity.EXTRA_VIDEO_WIDTH, videoResolution.x);
+        intent.putExtra(PlayActivity.EXTRA_VIDEO_HEIGHT, videoResolution.y);
+        intent.putExtra(PlayActivity.EXTRA_VIDEO_MAX_BITRATE, prefUtil.getVideoMaxBitrate());
+        intent.putExtra(PlayActivity.EXTRA_AUDIOCODEC, prefUtil.getAudioCodeType().name());
+        intent.putExtra(PlayActivity.EXTRA_AUDIO_MAX_BITRATE, prefUtil.getAudioMaxBitrate());
+        intent.putExtra(PlayActivity.EXTRA_NOAUDIOPROCESSING_ENABLED, prefUtil.getAudioProcessEnable());
     }
 }
